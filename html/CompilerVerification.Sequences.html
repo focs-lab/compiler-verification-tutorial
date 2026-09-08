@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CompilerVerification.Sequences</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.IMP.html">CompilerVerification.IMP &rarr;</a></span>
+</div>
+<h1 class="modname">CompilerVerification.Sequences</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-sequences-of-transitions">Sequences of transitions</a></li><li class="l2"><a href="#sec-finite-sequences-of-transitions">Finite sequences of transitions</a></li><li class="l2"><a href="#sec-infinite-sequences-of-transitions">Infinite sequences of transitions</a></li><li class="l2"><a href="#sec-determinism">Determinism</a></li></ul></div>
+<div class="content">
+<div class="license">  Sequences of transitions.<br><br>  Lean 4 port of `Sequences.v` from the Coq development accompanying<br>  Xavier Leroy, *Proving the correctness of a compiler*,<br>  EUTypes 2019 Summer School.<br><br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the statements follow the Coq originals,<br>  but the treatment of infinite sequences, all proofs, and all explanatory<br>  text have been rewritten for Lean 4.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.</div>
+<div class="doc"><h2 id="sec-sequences-of-transitions">Sequences of transitions</h2>
+<p>Operational semantics describes a program by a <em>transition relation</em> <code>R : A → A → Prop</code> on machine states.  Reasoning about whole executions rather than single steps means reasoning about the reflexive transitive closure of <code>R</code>, about its transitive closure, and about the <em>infinite</em> sequences of transitions that model divergence.  This file sets those notions up once, so that the semantics of IMP and the semantics of the stack machine can share them.</p></div>
+<pre class="code"><span class="k">namespace</span> Sequences
+
+<span class="k">universe</span> u
+<span class="k">variable</span> {A : Type u} {R : A → A → Prop} {a b c : A}</pre>
+<div class="doc"><h3 id="sec-finite-sequences-of-transitions">Finite sequences of transitions</h3></div>
+<div class="doc decl"><p><code>Star R a b</code>: state <code>b</code> is reachable from <code>a</code> in zero, one or several <code>R</code> transitions — the reflexive transitive closure of <code>R</code>.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="Star"><a class="anchor" href="#Star">Star</a></span> (R : A → A → Prop) : A → A → Prop <span class="k">where</span>
+  | refl (a : A) : Star R a a
+  | step {a b c : A} (h : R a b) (hs : Star R b c) : Star R a c</pre>
+<div class="doc decl"><p><code>Plus R a b</code>: state <code>b</code> is reachable from <code>a</code> in <em>at least one</em> transition — the transitive closure of <code>R</code>.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="Plus"><a class="anchor" href="#Plus">Plus</a></span> (R : A → A → Prop) : A → A → Prop <span class="k">where</span>
+  | left {a b c : A} (h : R a b) (hs : Star R b c) : Plus R a c
+
+<span class="k">theorem</span> <span class="d" id="Star.one"><a class="anchor" href="#Star.one">Star.one</a></span> (h : R a b) : Star R a b :=
+  .step h (.refl b)
+
+<span class="k">theorem</span> <span class="d" id="Star.trans"><a class="anchor" href="#Star.trans">Star.trans</a></span> (h₁ : Star R a b) (h₂ : Star R b c) : Star R a c := <span class="k">by</span>
+  <span class="k">induction</span> h₁ <span class="k">with</span>
+  | refl =&gt; <span class="k">exact</span> h₂
+  | step h _ ih =&gt; <span class="k">exact</span> .step h (ih h₂)
+
+<span class="k">theorem</span> <span class="d" id="Plus.one"><a class="anchor" href="#Plus.one">Plus.one</a></span> (h : R a b) : Plus R a b :=
+  .left h (.refl b)
+
+<span class="k">theorem</span> <span class="d" id="Plus.star"><a class="anchor" href="#Plus.star">Plus.star</a></span> (h : Plus R a b) : Star R a b := <span class="k">by</span>
+  <span class="k">cases</span> h <span class="k">with</span>
+  | left h hs =&gt; <span class="k">exact</span> .step h hs</pre>
+<div class="doc decl"><p>One-or-more steps, then zero-or-more steps, is one-or-more steps.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Plus.starTrans"><a class="anchor" href="#Plus.starTrans">Plus.starTrans</a></span> (h₁ : Plus R a b) (h₂ : Star R b c) : Plus R a c := <span class="k">by</span>
+  <span class="k">cases</span> h₁ <span class="k">with</span>
+  | left h hs =&gt; <span class="k">exact</span> .left h (hs.trans h₂)</pre>
+<div class="doc decl"><p>Zero-or-more steps, then one-or-more steps, is one-or-more steps.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Star.plusTrans"><a class="anchor" href="#Star.plusTrans">Star.plusTrans</a></span> (h₁ : Star R a b) (h₂ : Plus R b c) : Plus R a c := <span class="k">by</span>
+  <span class="k">induction</span> h₁ <span class="k">with</span>
+  | refl =&gt; <span class="k">exact</span> h₂
+  | step h _ ih =&gt; <span class="k">exact</span> .left h (ih h₂).star</pre>
+<div class="doc decl"><p>Appending a final step to a finite sequence.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Plus.right"><a class="anchor" href="#Plus.right">Plus.right</a></span> (h₁ : Star R a b) (h₂ : R b c) : Plus R a c :=
+  h₁.plusTrans (.one h₂)</pre>
+<div class="doc decl"><p>A state is <em>irreducible</em> when no transition leaves it: the execution is stuck, or has terminated.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Irred"><a class="anchor" href="#Irred">Irred</a></span> (R : A → A → Prop) (a : A) : Prop := ∀ b, ¬ R a b</pre>
+<div class="doc"><h3 id="sec-infinite-sequences-of-transitions">Infinite sequences of transitions</h3>
+<p>Divergence is the existence of <em>one</em> infinite sequence <code>a → a₁ → a₂ → ⋯</code> starting from <code>a</code>.  Two tempting definitions get this wrong or make it unusable:</p>
+<ul><li>&quot;every finite sequence out of <code>a</code> can be extended&quot; is a <em>different</em> property.  Take <code>R 0 0</code> and <code>R 0 1</code> on <code>Nat</code>: the sequence <code>0 →* 1</code> is stuck, yet <code>0 → 0 → 0 → ⋯</code> diverges.</li><li>&quot;there is an <code>f : Nat → A</code> with <code>f 0 = a</code> and <code>R (f i) (f (i+1))</code>&quot; is correct, but such an <code>f</code> generally cannot be constructed, so the definition is awkward to use.</li></ul>
+<p>Coq&#x27;s answer is a <em>coinductive</em> predicate — a greatest fixpoint.  Lean 4 has no coinductive types, so we take the greatest fixpoint by hand: <code>Infseq R a</code> holds when some set <code>X</code> contains <code>a</code> and is closed under taking one more transition.  Such an <code>X</code> is an <em>invariant</em> witnessing that the execution can always continue, and it is exactly what a proof by coinduction supplies.  The constructor and the destructor below recover the coinductive interface, and <code>Infseq.coinduction</code> is the coinduction principle — which here is just the definition unfolded.</p></div>
+<div class="doc decl"><p><code>Infseq R a</code>: there is an infinite sequence of <code>R</code> transitions out of <code>a</code>. Defined as the greatest fixpoint of <code>a ↦ ∃ b, R a b ∧ ·</code> — that is, as the existence of an invariant closed under one transition.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Infseq"><a class="anchor" href="#Infseq">Infseq</a></span> (R : A → A → Prop) (a : A) : Prop :=
+  ∃ X : A → Prop, X a ∧ ∀ x, X x → ∃ y, R x y ∧ X y</pre>
+<div class="doc decl"><p>The coinduction principle: an invariant closed under one transition witnesses divergence from each of its members.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Infseq.coinduction"><a class="anchor" href="#Infseq.coinduction">Infseq.coinduction</a></span> {X : A → Prop} (hX : ∀ x, X x → ∃ y, R x y ∧ X y)
+    (ha : X a) : Infseq R a :=
+  ⟨X, ha, hX⟩</pre>
+<div class="doc decl"><p>Destructor: a diverging state makes a transition to a diverging state.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Infseq.inv"><a class="anchor" href="#Infseq.inv">Infseq.inv</a></span> (h : Infseq R a) : ∃ b, R a b ∧ Infseq R b := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨X, ha, hX⟩ := h
+  <span class="k">obtain</span> ⟨y, hy, hXy⟩ := hX a ha
+  <span class="k">exact</span> ⟨y, hy, X, hXy, hX⟩</pre>
+<div class="doc decl"><p>Constructor: one transition into a diverging state diverges.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Infseq.step"><a class="anchor" href="#Infseq.step">Infseq.step</a></span> (h : R a b) (hb : Infseq R b) : Infseq R a := <span class="k">by</span>
+  <span class="k">refine</span> Infseq.coinduction (X := <span class="k">fun</span> x =&gt; x = a ∨ Infseq R x) ?_ (.inl <span class="k">rfl</span>)
+  <span class="k">rintro</span> x (<span class="k">rfl</span> | hx)
+  · <span class="k">exact</span> ⟨b, h, .inr hb⟩
+  · <span class="k">obtain</span> ⟨y, hy, hy&#x27;⟩ := hx.inv
+    <span class="k">exact</span> ⟨y, hy, .inr hy&#x27;⟩</pre>
+<div class="doc decl"><p>The variant of the coinduction principle in which the invariant is closed under <em>one or several</em> transitions.  This is the form used to prove that compiled code diverges: one source step may compile to several machine steps.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Infseq.coinduction_plus"><a class="anchor" href="#Infseq.coinduction_plus">Infseq.coinduction_plus</a></span> {X : A → Prop}
+    (hX : ∀ x, X x → ∃ y, Plus R x y ∧ X y) (ha : X a) : Infseq R a := <span class="k">by</span>
+  <span class="k">refine</span> Infseq.coinduction (X := <span class="k">fun</span> x =&gt; ∃ y, Star R x y ∧ X y) ?_ ⟨a, .refl a, ha⟩
+  <span class="k">rintro</span> x ⟨y, hxy, hXy⟩
+  <span class="k">cases</span> hxy <span class="k">with</span>
+  | refl =&gt;
+      <span class="k">obtain</span> ⟨z, hz, hXz⟩ := hX x hXy
+      <span class="k">cases</span> hz <span class="k">with</span>
+      | left h hs =&gt; <span class="k">exact</span> ⟨_, h, _, hs, hXz⟩
+  | step h hs =&gt; <span class="k">exact</span> ⟨_, h, _, hs, hXy⟩</pre>
+<div class="doc decl"><p>&quot;Every finite sequence out of <code>a</code> can be extended.&quot;  As noted above this is <em>not</em> the same as divergence, but it does imply it.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="AllSeqInf"><a class="anchor" href="#AllSeqInf">AllSeqInf</a></span> (R : A → A → Prop) (a : A) : Prop :=
+  ∀ b, Star R a b → ∃ c, R b c
+
+<span class="k">theorem</span> <span class="d" id="Infseq.of_allSeqInf"><a class="anchor" href="#Infseq.of_allSeqInf">Infseq.of_allSeqInf</a></span> (h : AllSeqInf R a) : Infseq R a := <span class="k">by</span>
+  <span class="k">refine</span> Infseq.coinduction (X := AllSeqInf R) ?_ h
+  <span class="k">intro</span> x hx
+  <span class="k">obtain</span> ⟨y, hy⟩ := hx x (.refl x)
+  <span class="k">exact</span> ⟨y, hy, <span class="k">fun</span> z hz =&gt; hx z (.step hy hz)⟩</pre>
+<div class="doc decl"><p>The explicit-function characterisation also implies divergence.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Infseq.of_function"><a class="anchor" href="#Infseq.of_function">Infseq.of_function</a></span> (f : Nat → A) (h₀ : f 0 = a) (h : ∀ i, R (f i) (f (i + 1))) :
+    Infseq R a := <span class="k">by</span>
+  <span class="k">refine</span> Infseq.coinduction (X := <span class="k">fun</span> x =&gt; ∃ i, x = f i) ?_ ⟨0, h₀.symm⟩
+  <span class="k">rintro</span> x ⟨i, <span class="k">rfl</span>⟩
+  <span class="k">exact</span> ⟨f (i + 1), h i, i + 1, <span class="k">rfl</span>⟩</pre>
+<div class="doc decl"><p>A state with a self-loop diverges.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Infseq.cycle"><a class="anchor" href="#Infseq.cycle">Infseq.cycle</a></span> (h : R a a) : Infseq R a :=
+  Infseq.coinduction (X := <span class="k">fun</span> x =&gt; x = a) (<span class="k">by</span> <span class="k">intro</span> x hx; <span class="k">subst</span> hx; <span class="k">exact</span> ⟨x, h, <span class="k">rfl</span>⟩) <span class="k">rfl</span></pre>
+<div class="doc"><h3 id="sec-determinism">Determinism</h3>
+<p>A transition relation is <em>functional</em>, or deterministic, when every state has at most one successor.  The semantics of the stack machine is functional, and that is what lets us conclude that compiled code cannot both terminate and diverge.</p></div>
+<pre class="code"><span class="k">section</span> Deterministic
+
+<span class="k">variable</span> (hfun : ∀ a b c, R a b → R a c → b = c)
+
+include hfun</pre>
+<div class="doc decl"><p>Two finite sequences out of the same state are prefixes of one another.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="star_star_inv"><a class="anchor" href="#star_star_inv">star_star_inv</a></span> (h₁ : Star R a b) : ∀ {c}, Star R a c → Star R b c ∨ Star R c b := <span class="k">by</span>
+  <span class="k">induction</span> h₁ <span class="k">with</span>
+  | refl =&gt; <span class="k">exact</span> <span class="k">fun</span> h =&gt; .inl h
+  | step h _ ih =&gt;
+      <span class="k">intro</span> c hc
+      <span class="k">cases</span> hc <span class="k">with</span>
+      | refl =&gt; <span class="k">exact</span> .inr (.step h (<span class="k">by</span> <span class="k">assumption</span>))
+      | step h&#x27; hs&#x27; =&gt; <span class="k">exact</span> ih (hfun _ _ _ h h&#x27; ▸ hs&#x27;)</pre>
+<div class="doc decl"><p>A deterministic program has at most one terminal state.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="finseq_unique"><a class="anchor" href="#finseq_unique">finseq_unique</a></span> (h₁ : Star R a b) (i₁ : Irred R b) (h₂ : Star R a c)
+    (i₂ : Irred R c) : b = c := <span class="k">by</span>
+  <span class="k">rcases</span> star_star_inv hfun h₁ h₂ <span class="k">with</span> h | h &lt;;&gt; <span class="k">cases</span> h
+  · <span class="k">rfl</span>
+  · <span class="k">exact</span> absurd ‹R b _› (i₁ _)
+  · <span class="k">rfl</span>
+  · <span class="k">exact</span> absurd ‹R c _› (i₂ _)</pre>
+<div class="doc decl"><p>Divergence is preserved along a finite sequence.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="infseq_star_inv"><a class="anchor" href="#infseq_star_inv">infseq_star_inv</a></span> (h : Star R a b) (hi : Infseq R a) : Infseq R b := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | refl =&gt; <span class="k">exact</span> hi
+  | step h _ ih =&gt;
+      <span class="k">obtain</span> ⟨y, hy, hy&#x27;⟩ := hi.inv
+      <span class="k">exact</span> ih (hfun _ _ _ h hy ▸ hy&#x27;)</pre>
+<div class="doc decl"><p>A deterministic program cannot both diverge and reach a stuck state.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="infseq_finseq_excl"><a class="anchor" href="#infseq_finseq_excl">infseq_finseq_excl</a></span> (h : Star R a b) (hb : Irred R b) (hi : Infseq R a) : False := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨y, hy, _⟩ := (infseq_star_inv hfun h hi).inv
+  <span class="k">exact</span> hb y hy</pre>
+<div class="doc decl"><p>If some sequence out of <code>a</code> is infinite, then <em>every</em> sequence out of <code>a</code> can be extended.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="infseq_all_seq_inf"><a class="anchor" href="#infseq_all_seq_inf">infseq_all_seq_inf</a></span> (hi : Infseq R a) : AllSeqInf R a := <span class="k">by</span>
+  <span class="k">intro</span> b hb
+  <span class="k">obtain</span> ⟨y, hy, _⟩ := (infseq_star_inv hfun hb hi).inv
+  <span class="k">exact</span> ⟨y, hy⟩
+
+<span class="k">end</span> Deterministic
+
+<span class="k">end</span> Sequences</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>CompilerVerification/Sequences.lean</code>.
+</div>
+</body>
+</html>

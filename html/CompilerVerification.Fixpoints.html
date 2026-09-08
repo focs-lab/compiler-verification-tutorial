@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CompilerVerification.Fixpoints</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.Deadcode.html">&larr; CompilerVerification.Deadcode</a> &nbsp; <a href="Exercises.html">Exercises &rarr;</a></span>
+</div>
+<h1 class="modname">CompilerVerification.Fixpoints</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-more-about-fixpoints">More about fixpoints</a></li><li class="l2"><a href="#sec-the-general-theory">The general theory</a></li><li class="l2"><a href="#sec-application-to-constant-propagation">Application to constant propagation</a></li><li class="l3"><a href="#sec-well-foundedness">Well-foundedness</a></li><li class="l3"><a href="#sec-iterating-from-a-starting-point">Iterating from a starting point</a></li><li class="l3"><a href="#sec-defining-the-analyser-and-proving-it-increasing-simultaneously">Defining the analyser and proving it increasing, simultaneously</a></li></ul></div>
+<div class="content">
+<div class="license">  Fixpoints: from Knaster–Tarski to an algorithm that computes them.<br><br>  Lean 4 port of `Fixpoints.v` from the Coq development accompanying<br>  Xavier Leroy, *Proving the correctness of a compiler*,<br>  EUTypes 2019 Summer School.<br><br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the definitions and theorem statements follow<br>  the Coq originals, but all proofs and explanatory text have been rewritten<br>  for Lean 4.  Since abstract stores are association lists here rather than<br>  Coq `FMaps`, the well-foundedness argument is carried out over the list of<br>  distinct keys instead of over a finite map&#x27;s cardinal.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.</div>
+<pre class="code"><span class="k">import</span> CompilerVerification.Constprop</pre>
+<div class="doc"><h2 id="sec-more-about-fixpoints">More about fixpoints</h2>
+<p><code>Constprop.lean</code> analysed loops with a deliberately crude fixpoint: iterate twenty times and give up.  That is sound but imprecise.  Here we do the job properly.</p>
+<p>The first half is the general theory.  Knaster–Tarski guarantees that a monotone function on a suitable ordered set has a fixpoint, and its proof is already an algorithm — iterate from the bottom until nothing changes — but extracting that algorithm needs care: an existence proof (<code>∃ x, …</code>) gives no way to <em>compute</em> <code>x</code>.  In Lean, as in Coq, the way out is to produce a subtype <code>{ x // … }</code> instead, which carries the value along with its specification.</p>
+<p>The second half applies the theory to the abstract stores of constant propagation.  Two obstacles appear, exactly as in the Coq development: the strict order has to be shown well founded, and abstract stores have no bottom element, so the iteration must start somewhere else.</p></div>
+<pre class="code"><span class="k">namespace</span> Fixpoints
+
+<span class="k">open</span> IMP Constprop</pre>
+<div class="doc"><h3 id="sec-the-general-theory">The general theory</h3>
+<p>We package the requirements on the ordered set as a structure: a decidable equality, a transitive order, and — the crucial hypothesis — well-foundedness of the induced strict order, which is what says that every strictly ascending chain is finite.</p></div>
+<div class="doc decl"><p>The data needed to run a fixpoint iteration on a type <code>A</code>.</p></div>
+<pre class="code"><span class="k">structure</span> <span class="d" id="FixLattice"><a class="anchor" href="#FixLattice">FixLattice</a></span> (A : Type u) <span class="k">where</span>
+<span class="c">  -- Equality on `A` (need not be syntactic equality).</span>
+  eq : A → A → Prop
+<span class="c">  -- A decision procedure for `eq`.</span>
+  beq : A → A → Bool
+  beq_eq : ∀ {x y}, beq x y = true → eq x y
+  beq_neq : ∀ {x y}, beq x y = false → ¬ eq x y
+<span class="c">  -- The order.</span>
+  le : A → A → Prop
+  le_trans : ∀ {x y z}, le x y → le y z → le x z
+<span class="c">  -- Every strictly ascending chain is finite.</span>
+  gt_wf : WellFounded (<span class="k">fun</span> x y =&gt; le y x ∧ ¬ eq y x)
+
+<span class="k">namespace</span> FixLattice
+
+<span class="k">variable</span> {A : Type u} (L : FixLattice A) (F : A → A)</pre>
+<div class="doc decl"><p>The strict order induced by <code>le</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Gt"><a class="anchor" href="#Gt">Gt</a></span> (x y : A) : Prop := L.le y x ∧ ¬ L.eq y x</pre>
+<div class="doc decl"><p><strong>Knaster–Tarski.</strong>  A monotone function has a fixpoint.  The proof is by well-founded induction on the strict order: starting from a pre-fixpoint <code>x</code> (one with <code>x ≤ F x</code>), either <code>x</code> is already a fixpoint, or <code>F x</code> is strictly above <code>x</code> and is itself a pre-fixpoint, so we recurse.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="fixpoint_exists"><a class="anchor" href="#fixpoint_exists">fixpoint_exists</a></span> (Fmon : ∀ x y, L.le x y → L.le (F x) (F y))
+    (bot : A) (bot_smallest : ∀ x, L.le bot x) : ∃ x, L.eq x (F x) := <span class="k">by</span>
+  <span class="k">have</span> key : ∀ x, L.le x (F x) → ∃ y, L.eq y (F y) := <span class="k">by</span>
+    <span class="k">intro</span> x
+    <span class="k">refine</span> L.gt_wf.induction (C := <span class="k">fun</span> x =&gt; L.le x (F x) → ∃ y, L.eq y (F y)) x ?_
+    <span class="k">intro</span> x ih hpre
+    <span class="k">cases</span> hb : L.beq x (F x)
+    · <span class="k">exact</span> ih (F x) ⟨hpre, L.beq_neq hb⟩ (Fmon _ _ hpre)
+    · <span class="k">exact</span> ⟨x, L.beq_eq hb⟩
+  <span class="k">exact</span> key bot (bot_smallest _)</pre>
+<div class="doc decl"><p>The same argument, but producing the fixpoint rather than merely asserting that one exists.  <code>iterate</code> takes a pre-fixpoint <code>x</code> together with a proof that <code>x</code> is below every post-fixpoint, and returns the fixpoint reached from <code>x</code>, together with proofs that it <em>is</em> a fixpoint and that it is still below every post-fixpoint — that is, that it is the <em>least</em> one.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="iterate"><a class="anchor" href="#iterate">iterate</a></span> (Fmon : ∀ x y, L.le x y → L.le (F x) (F y)) :
+    ∀ (x : A), L.le x (F x) → (∀ z, L.le (F z) z → L.le x z) →
+      { y : A // L.eq y (F y) ∧ ∀ z, L.le (F z) z → L.le y z } :=
+  L.gt_wf.fix <span class="k">fun</span> x ih hpre hsmall =&gt;
+    <span class="k">match</span> hb : L.beq x (F x) <span class="k">with</span>
+    | true =&gt; ⟨x, L.beq_eq hb, hsmall⟩
+    | false =&gt;
+        ih (F x) ⟨hpre, L.beq_neq hb⟩ (Fmon _ _ hpre)
+          (<span class="k">fun</span> z hz =&gt; L.le_trans (Fmon _ _ (hsmall z hz)) hz)</pre>
+<div class="doc decl"><p>The least fixpoint reached by iterating from a given pre-fixpoint.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="fixpointFrom"><a class="anchor" href="#fixpointFrom">fixpointFrom</a></span> (Fmon : ∀ x y, L.le x y → L.le (F x) (F y))
+    (init : A) (hpre : L.le init (F init))
+    (hsmall : ∀ z, L.le (F z) z → L.le init z) : A :=
+  (L.iterate F Fmon init hpre hsmall).1
+
+<span class="k">theorem</span> <span class="d" id="fixpointFrom_correct"><a class="anchor" href="#fixpointFrom_correct">fixpointFrom_correct</a></span> (Fmon : ∀ x y, L.le x y → L.le (F x) (F y))
+    (init : A) (hpre : L.le init (F init))
+    (hsmall : ∀ z, L.le (F z) z → L.le init z) :
+    L.eq (L.fixpointFrom F Fmon init hpre hsmall) (F (L.fixpointFrom F Fmon init hpre hsmall))
+    ∧ ∀ z, L.le (F z) z → L.le (L.fixpointFrom F Fmon init hpre hsmall) z :=
+  (L.iterate F Fmon init hpre hsmall).2</pre>
+<div class="doc decl"><p>When the lattice does have a bottom element, iterating from it gives the least fixpoint outright.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="fixpoint"><a class="anchor" href="#fixpoint">fixpoint</a></span> (Fmon : ∀ x y, L.le x y → L.le (F x) (F y))
+    (bot : A) (bot_smallest : ∀ x, L.le bot x) : A :=
+  L.fixpointFrom F Fmon bot (bot_smallest _) (<span class="k">fun</span> z _ =&gt; bot_smallest z)
+
+<span class="k">theorem</span> <span class="d" id="fixpoint_correct"><a class="anchor" href="#fixpoint_correct">fixpoint_correct</a></span> (Fmon : ∀ x y, L.le x y → L.le (F x) (F y))
+    (bot : A) (bot_smallest : ∀ x, L.le bot x) :
+    L.eq (L.fixpoint F Fmon bot bot_smallest) (F (L.fixpoint F Fmon bot bot_smallest))
+    ∧ ∀ z, L.le (F z) z → L.le (L.fixpoint F Fmon bot bot_smallest) z :=
+  L.fixpointFrom_correct F Fmon bot _ _
+
+<span class="k">end</span> FixLattice</pre>
+<div class="doc"><h3 id="sec-application-to-constant-propagation">Application to constant propagation</h3>
+<p>To instantiate the theory at abstract stores we must supply the pieces of <code>FixLattice</code>.  Everything is easy except <code>gt_wf</code>.</p></div>
+<div class="doc decl"><p>Extensional equality of abstract stores.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="AEq"><a class="anchor" href="#AEq">AEq</a></span> (S₁ S₂ : AStore) : Prop := ∀ x, S₁.find x = S₂.find x
+
+<span class="k">theorem</span> <span class="d" id="AEq_symm"><a class="anchor" href="#AEq_symm">AEq_symm</a></span> {S₁ S₂ : AStore} (h : AEq S₁ S₂) : AEq S₂ S₁ := <span class="k">fun</span> x =&gt; (h x).symm
+
+<span class="k">theorem</span> <span class="d" id="AEq_Le"><a class="anchor" href="#AEq_Le">AEq_Le</a></span> {S₁ S₂ : AStore} (h : AEq S₁ S₂) : Le S₁ S₂ := <span class="k">fun</span> x n hf =&gt; <span class="k">by</span>
+  rw [h x]; <span class="k">exact</span> hf
+
+<span class="k">theorem</span> <span class="d" id="equal_AEq"><a class="anchor" href="#equal_AEq">equal_AEq</a></span> {S₁ S₂ : AStore} (h : AStore.equal S₁ S₂ = true) : AEq S₁ S₂ :=
+  AStore.equal_find h
+
+<span class="k">theorem</span> <span class="d" id="AEq_equal"><a class="anchor" href="#AEq_equal">AEq_equal</a></span> {S₁ S₂ : AStore} (h : AEq S₁ S₂) : AStore.equal S₁ S₂ = true := <span class="k">by</span>
+  <span class="k">simp</span> only [AStore.equal, List.all_eq_true]
+  <span class="k">intro</span> x _
+  <span class="k">simp</span> [h x]
+
+<span class="k">theorem</span> <span class="d" id="equal_nAEq"><a class="anchor" href="#equal_nAEq">equal_nAEq</a></span> {S₁ S₂ : AStore} (h : AStore.equal S₁ S₂ = false) : ¬ AEq S₁ S₂ := <span class="k">by</span>
+  <span class="k">intro</span> he
+  rw [AEq_equal he] <span class="k">at</span> h
+  <span class="k">simp</span> <span class="k">at</span> h</pre>
+<div class="doc"><h4 id="sec-well-foundedness">Well-foundedness</h4>
+<p>This is the one genuinely hard proof.  We measure an abstract store by the number of <em>distinct</em> variables it says something about.  Going strictly up in the order means losing at least one such fact, so the measure strictly decreases, and <code>Nat</code> is well founded.</p></div>
+<div class="doc decl"><p>Remove duplicates from a list of variables.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="dedup"><a class="anchor" href="#dedup">dedup</a></span> : List Ident → List Ident
+  | [] =&gt; []
+  | a :: l =&gt; <span class="k">if</span> a ∈ dedup l <span class="k">then</span> dedup l <span class="k">else</span> a :: dedup l
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="mem_dedup"><a class="anchor" href="#mem_dedup">mem_dedup</a></span> (x : Ident) (l : List Ident) : x ∈ dedup l ↔ x ∈ l := <span class="k">by</span>
+  <span class="k">induction</span> l <span class="k">with</span>
+  | nil =&gt; <span class="k">simp</span> [dedup]
+  | cons a l ih =&gt;
+      by_cases h : a ∈ dedup l
+      · <span class="k">have</span> hd : dedup (a :: l) = dedup l := <span class="k">by</span> <span class="k">simp</span> [dedup, h]
+        rw [hd, ih]
+        <span class="k">refine</span> ⟨<span class="k">fun</span> hx =&gt; List.mem_cons_of_mem _ hx, <span class="k">fun</span> hx =&gt; ?_⟩
+        <span class="k">rcases</span> List.mem_cons.mp hx <span class="k">with</span> <span class="k">rfl</span> | hx
+        · <span class="k">exact</span> ih.mp h
+        · <span class="k">exact</span> hx
+      · <span class="k">have</span> hd : dedup (a :: l) = a :: dedup l := <span class="k">by</span> <span class="k">simp</span> [dedup, h]
+        rw [hd]; <span class="k">simp</span> [ih]
+
+<span class="k">theorem</span> <span class="d" id="nodup_dedup"><a class="anchor" href="#nodup_dedup">nodup_dedup</a></span> : ∀ (l : List Ident), (dedup l).Nodup
+  | [] =&gt; <span class="k">by</span> <span class="k">simp</span> [dedup]
+  | a :: l =&gt; <span class="k">by</span>
+      by_cases h : a ∈ dedup l
+      · simpa [dedup, h] <span class="k">using</span> nodup_dedup l
+      · <span class="k">simp</span> only [dedup, if_neg h]
+        <span class="k">exact</span> List.nodup_cons.mpr ⟨h, nodup_dedup l⟩</pre>
+<div class="doc decl"><p>A list with no duplicates is no longer than any list containing it.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="nodup_length_le"><a class="anchor" href="#nodup_length_le">nodup_length_le</a></span> : ∀ {l₁ l₂ : List Ident}, l₁.Nodup → l₁ ⊆ l₂ →
+    l₁.length ≤ l₂.length
+  | [], _, _, _ =&gt; Nat.zero_le _
+  | a :: l₁, l₂, hnd, hsub =&gt; <span class="k">by</span>
+      <span class="k">obtain</span> ⟨hna, hnd&#x27;⟩ := List.nodup_cons.mp hnd
+      <span class="k">have</span> ha : a ∈ l₂ := hsub (<span class="k">by</span> <span class="k">simp</span>)
+      <span class="k">have</span> hsub&#x27; : l₁ ⊆ l₂.erase a := <span class="k">by</span>
+        <span class="k">intro</span> x hx
+        <span class="k">exact</span> (List.mem_erase_of_ne (<span class="k">by</span> <span class="k">rintro</span> <span class="k">rfl</span>; <span class="k">exact</span> hna hx)).mpr (hsub (<span class="k">by</span> <span class="k">simp</span> [hx]))
+      <span class="k">have</span> hle := nodup_length_le hnd&#x27; hsub&#x27;
+      rw [List.length_erase_of_mem ha] <span class="k">at</span> hle
+      <span class="k">have</span> : 0 &lt; l₂.length := List.length_pos_of_mem ha
+      simpa <span class="k">using</span> <span class="k">by</span> <span class="k">omega</span></pre>
+<div class="doc decl"><p>Two duplicate-free lists of the same length, one contained in the other, contain each other.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="subset_of_length_le"><a class="anchor" href="#subset_of_length_le">subset_of_length_le</a></span> {l₁ l₂ : List Ident} (hnd : l₁.Nodup) (hsub : l₁ ⊆ l₂)
+    (hlen : l₂.length ≤ l₁.length) : l₂ ⊆ l₁ := <span class="k">by</span>
+  <span class="k">intro</span> b hb
+  by_cases hnb : b ∈ l₁
+  · <span class="k">exact</span> hnb
+  · exfalso
+    <span class="k">have</span> hsub&#x27; : l₁ ⊆ l₂.erase b := <span class="k">by</span>
+      <span class="k">intro</span> x hx
+      <span class="k">exact</span> (List.mem_erase_of_ne (<span class="k">by</span> <span class="k">rintro</span> <span class="k">rfl</span>; <span class="k">exact</span> hnb hx)).mpr (hsub hx)
+    <span class="k">have</span> hle := nodup_length_le hnd hsub&#x27;
+    rw [List.length_erase_of_mem hb] <span class="k">at</span> hle
+    <span class="k">have</span> : 0 &lt; l₂.length := List.length_pos_of_mem hb
+    <span class="k">omega</span></pre>
+<div class="doc decl"><p>The variables an abstract store knows something about, without duplicates.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="dom"><a class="anchor" href="#dom">dom</a></span> (S : AStore) : List Ident := dedup S.keys
+
+<span class="k">theorem</span> <span class="d" id="mem_dom"><a class="anchor" href="#mem_dom">mem_dom</a></span> {S : AStore} {x : Ident} : x ∈ dom S ↔ (S.find x).isSome = true := <span class="k">by</span>
+  rw [dom, mem_dedup, AStore.find_isSome_iff]</pre>
+<div class="doc decl"><p>The measure: how many variables the store pins down.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="card"><a class="anchor" href="#card">card</a></span> (S : AStore) : Nat := (dom S).length
+
+<span class="k">theorem</span> <span class="d" id="Le_card"><a class="anchor" href="#Le_card">Le_card</a></span> {S T : AStore} (h : Le T S) :
+    card S ≤ card T ∧ (card S = card T → AEq T S) := <span class="k">by</span>
+  <span class="k">have</span> hsub : dom S ⊆ dom T := <span class="k">by</span>
+    <span class="k">intro</span> x hx
+    rw [mem_dom] <span class="k">at</span> hx ⊢
+    <span class="k">cases</span> hf : S.find x <span class="k">with</span>
+    | none =&gt; rw [hf] <span class="k">at</span> hx; <span class="k">simp</span> <span class="k">at</span> hx
+    | some n =&gt; rw [h x n hf]; <span class="k">rfl</span>
+  <span class="k">have</span> hle : card S ≤ card T := nodup_length_le (nodup_dedup _) hsub
+  <span class="k">refine</span> ⟨hle, <span class="k">fun</span> heq =&gt; ?_⟩
+  <span class="k">have</span> hsup : dom T ⊆ dom S :=
+    subset_of_length_le (nodup_dedup _) hsub (<span class="k">by</span> <span class="k">simp</span> only [card] <span class="k">at</span> heq; <span class="k">omega</span>)
+  <span class="k">intro</span> x
+  <span class="k">cases</span> hf : S.find x <span class="k">with</span>
+  | some n =&gt; <span class="k">exact</span> h x n hf
+  | none =&gt;
+      <span class="k">cases</span> hg : T.find x <span class="k">with</span>
+      | none =&gt; <span class="k">rfl</span>
+      | some m =&gt;
+          exfalso
+          <span class="k">have</span> : x ∈ dom T := mem_dom.mpr (<span class="k">by</span> rw [hg]; <span class="k">rfl</span>)
+          <span class="k">have</span> := mem_dom.mp (hsup <span class="k">this</span>)
+          rw [hf] <span class="k">at</span> <span class="k">this</span>; <span class="k">simp</span> <span class="k">at</span> <span class="k">this</span>
+
+<span class="k">theorem</span> <span class="d" id="Gt_card"><a class="anchor" href="#Gt_card">Gt_card</a></span> {S S&#x27; : AStore} (h : Le S&#x27; S ∧ ¬ AEq S&#x27; S) : card S &lt; card S&#x27; := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨hle, hne⟩ := h
+  <span class="k">obtain</span> ⟨hcard, heq⟩ := Le_card hle
+  <span class="k">have</span> : card S ≠ card S&#x27; := <span class="k">fun</span> e =&gt; hne (heq e)
+  <span class="k">omega</span>
+
+<span class="k">theorem</span> <span class="d" id="Gt_wf"><a class="anchor" href="#Gt_wf">Gt_wf</a></span> : WellFounded (<span class="k">fun</span> S S&#x27; : AStore =&gt; Le S&#x27; S ∧ ¬ AEq S&#x27; S) :=
+  Subrelation.wf Gt_card (invImage card Nat.lt_wfRel).wf</pre>
+<div class="doc decl"><p>Abstract stores as a lattice for the fixpoint machinery.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="storeLattice"><a class="anchor" href="#storeLattice">storeLattice</a></span> : FixLattice AStore <span class="k">where</span>
+  eq := AEq
+  beq := AStore.equal
+  beq_eq := equal_AEq
+  beq_neq := <span class="k">fun</span> {x y} h =&gt; equal_nAEq (<span class="k">by</span>
+    <span class="k">cases</span> hv : AStore.equal x y <span class="k">with</span>
+    | false =&gt; <span class="k">rfl</span>
+    | true =&gt; rw [hv] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h)
+  le := Le
+  le_trans := <span class="k">fun</span> h₁ h₂ =&gt; Le.trans h₁ h₂
+  gt_wf := Gt_wf</pre>
+<div class="doc"><h4 id="sec-iterating-from-a-starting-point">Iterating from a starting point</h4>
+<p>Abstract stores have no bottom element, so we cannot iterate from one.  But for the functions we care about there is a natural pre-fixpoint to start from: the abstract store <code>init</code> describing what is known on entry to the loop.  We iterate <code>X ↦ init ⊔ F X</code>, which is above <code>init</code> by construction.</p></div>
+<div class="doc decl"><p>A function on abstract stores is <em>increasing</em> when it preserves the order.  Only increasing functions have fixpoints, which is exactly what makes the definition of the analyser below delicate.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Increasing"><a class="anchor" href="#Increasing">Increasing</a></span> (F : AStore → AStore) : Prop := ∀ x y, Le x y → Le (F x) (F y)
+
+<span class="k">theorem</span> <span class="d" id="join_increasing"><a class="anchor" href="#join_increasing">join_increasing</a></span> {S₁ S₂ S₃ S₄ : AStore} (h₁ : Le S₁ S₂) (h₂ : Le S₃ S₄) :
+    Le (AStore.join S₁ S₃) (AStore.join S₂ S₄) := <span class="k">by</span>
+  <span class="k">intro</span> x n hf
+  <span class="k">obtain</span> ⟨ha, hb⟩ := (AStore.find_join S₂ S₄ x n).mp hf
+  <span class="k">exact</span> (AStore.find_join S₁ S₃ x n).mpr ⟨h₁ x n ha, h₂ x n hb⟩</pre>
+<div class="doc decl"><p>The least fixpoint of <code>X ↦ init ⊔ F X</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="fixpointJoin"><a class="anchor" href="#fixpointJoin">fixpointJoin</a></span> (init : AStore) (F : AStore → AStore) (hF : Increasing F) : AStore :=
+  storeLattice.fixpointFrom (<span class="k">fun</span> X =&gt; AStore.join init (F X))
+    (<span class="k">fun</span> x y h =&gt; join_increasing (<span class="k">fun</span> _ _ hf =&gt; hf) (hF x y h))
+    init (Le_join_left _ _)
+    (<span class="k">fun</span> z hz =&gt; Le.trans (Le_join_left init (F z)) hz)
+
+<span class="k">theorem</span> <span class="d" id="fixpointJoin_eq"><a class="anchor" href="#fixpointJoin_eq">fixpointJoin_eq</a></span> (init : AStore) (F : AStore → AStore) (hF : Increasing F) :
+    AEq (AStore.join init (F (fixpointJoin init F hF))) (fixpointJoin init F hF) :=
+  AEq_symm (storeLattice.fixpointFrom_correct _ _ _ _ _).1
+
+<span class="k">theorem</span> <span class="d" id="fixpointJoin_sound"><a class="anchor" href="#fixpointJoin_sound">fixpointJoin_sound</a></span> (init : AStore) (F : AStore → AStore) (hF : Increasing F) :
+    Le init (fixpointJoin init F hF) ∧ Le (F (fixpointJoin init F hF)) (fixpointJoin init F hF) := <span class="k">by</span>
+  <span class="k">have</span> hle : Le (AStore.join init (F (fixpointJoin init F hF))) (fixpointJoin init F hF) :=
+    AEq_Le (fixpointJoin_eq init F hF)
+  <span class="k">exact</span> ⟨Le.trans (Le_join_left _ _) hle, Le.trans (Le_join_right _ _) hle⟩
+
+<span class="k">theorem</span> <span class="d" id="fixpointJoin_smallest"><a class="anchor" href="#fixpointJoin_smallest">fixpointJoin_smallest</a></span> (init : AStore) (F : AStore → AStore) (hF : Increasing F)
+    (S : AStore) (h : Le (AStore.join init (F S)) S) : Le (fixpointJoin init F hF) S :=
+  (storeLattice.fixpointFrom_correct _ _ _ _ _).2 S h
+
+<span class="k">theorem</span> <span class="d" id="fixpointJoin_increasing"><a class="anchor" href="#fixpointJoin_increasing">fixpointJoin_increasing</a></span> (F : AStore → AStore) (hF : Increasing F)
+    {S₁ S₂ : AStore} (h : Le S₁ S₂) :
+    Le (fixpointJoin S₁ F hF) (fixpointJoin S₂ F hF) := <span class="k">by</span>
+  <span class="k">refine</span> fixpointJoin_smallest _ _ _ _ ?_
+  <span class="k">refine</span> Le.trans (join_increasing h (<span class="k">fun</span> _ _ hf =&gt; hf)) ?_
+  <span class="k">exact</span> AEq_Le (fixpointJoin_eq S₂ F hF)</pre>
+<div class="doc"><h4 id="sec-defining-the-analyser-and-proving-it-increasing-simultaneously">Defining the analyser and proving it increasing, simultaneously</h4>
+<p>We cannot define the abstract interpreter first and prove it increasing afterwards: the loop case <em>needs</em> the increasing-ness of the body in order to take a fixpoint at all.  So the function must return its own correctness proof, as a subtype.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Aeval_increasing"><a class="anchor" href="#Aeval_increasing">Aeval_increasing</a></span> {S₁ S₂ : AStore} (h : Le S₁ S₂) :
+    ∀ (a : aexp) {n : Int}, Aeval S₂ a = some n → Aeval S₁ a = some n
+  | .const _, _, hf =&gt; hf
+  | .var x, n, hf =&gt; h x n hf
+  | .plus a₁ a₂, n, hf =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Aeval] <span class="k">at</span> hf ⊢
+      <span class="k">cases</span> h₁ : Aeval S₂ a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S₂ a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> hf
+              rw [Aeval_increasing h a₁ h₁, Aeval_increasing h a₂ h₂]; <span class="k">exact</span> hf
+  | .minus a₁ a₂, n, hf =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Aeval] <span class="k">at</span> hf ⊢
+      <span class="k">cases</span> h₁ : Aeval S₂ a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S₂ a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> hf
+              rw [Aeval_increasing h a₁ h₁, Aeval_increasing h a₂ h₂]; <span class="k">exact</span> hf
+
+<span class="k">theorem</span> <span class="d" id="Beval_increasing"><a class="anchor" href="#Beval_increasing">Beval_increasing</a></span> {S₁ S₂ : AStore} (h : Le S₁ S₂) :
+    ∀ (b : bexp) {v : Bool}, Beval S₂ b = some v → Beval S₁ b = some v
+  | .true, _, hf =&gt; hf
+  | .false, _, hf =&gt; hf
+  | .equal a₁ a₂, v, hf =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> hf ⊢
+      <span class="k">cases</span> h₁ : Aeval S₂ a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S₂ a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> hf
+              rw [Aeval_increasing h a₁ h₁, Aeval_increasing h a₂ h₂]; <span class="k">exact</span> hf
+  | .lessequal a₁ a₂, v, hf =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> hf ⊢
+      <span class="k">cases</span> h₁ : Aeval S₂ a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S₂ a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> hf
+              rw [Aeval_increasing h a₁ h₁, Aeval_increasing h a₂ h₂]; <span class="k">exact</span> hf
+  | .not b₁, v, hf =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> hf ⊢
+      <span class="k">cases</span> h₁ : Beval S₂ b₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+      | some v₁ =&gt; rw [h₁] <span class="k">at</span> hf; rw [Beval_increasing h b₁ h₁]; <span class="k">exact</span> hf
+  | .and b₁ b₂, v, hf =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> hf ⊢
+      <span class="k">cases</span> h₁ : Beval S₂ b₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+      | some v₁ =&gt;
+          <span class="k">cases</span> h₂ : Beval S₂ b₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> hf; <span class="k">simp</span> <span class="k">at</span> hf
+          | some v₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> hf
+              rw [Beval_increasing h b₁ h₁, Beval_increasing h b₂ h₂]; <span class="k">exact</span> hf
+
+<span class="k">theorem</span> <span class="d" id="update_increasing"><a class="anchor" href="#update_increasing">update_increasing</a></span> {S₁ S₂ : AStore} (x : Ident) (a : aexp) (h : Le S₁ S₂) :
+    Le (AStore.update x (Aeval S₁ a) S₁) (AStore.update x (Aeval S₂ a) S₂) := <span class="k">by</span>
+  <span class="k">intro</span> y n hf
+  rw [AStore.find_update] <span class="k">at</span> hf ⊢
+  by_cases hyx : y = x
+  · <span class="k">simp</span> only [hyx, if_true] <span class="k">at</span> hf ⊢
+    <span class="k">exact</span> Aeval_increasing h a hf
+  · <span class="k">simp</span> only [hyx, if_false] <span class="k">at</span> hf ⊢
+    <span class="k">exact</span> h y n hf</pre>
+<div class="doc decl"><p>The abstract interpreter, packaged with a proof that it is increasing. Compare the crude <code>Constprop.Cexec</code>: the difference is entirely in the loop case, which here takes a genuine least fixpoint.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="CexecM"><a class="anchor" href="#CexecM">CexecM</a></span> : com → { F : AStore → AStore // Increasing F }
+  | .skip =&gt; ⟨id, <span class="k">fun</span> _ _ h =&gt; h⟩
+  | .assign x a =&gt;
+      ⟨<span class="k">fun</span> S =&gt; AStore.update x (Aeval S a) S, <span class="k">fun</span> _ _ h =&gt; update_increasing x a h⟩
+  | .seq c₁ c₂ =&gt;
+      ⟨<span class="k">fun</span> S =&gt; (CexecM c₂).1 ((CexecM c₁).1 S),
+       <span class="k">fun</span> _ _ h =&gt; (CexecM c₂).2 _ _ ((CexecM c₁).2 _ _ h)⟩
+  | .ifthenelse b c₁ c₂ =&gt;
+      ⟨<span class="k">fun</span> S =&gt;
+          <span class="k">match</span> Beval S b <span class="k">with</span>
+          | some Bool.true =&gt; (CexecM c₁).1 S
+          | some Bool.false =&gt; (CexecM c₂).1 S
+          | none =&gt; AStore.join ((CexecM c₁).1 S) ((CexecM c₂).1 S),
+       <span class="k">by</span>
+         <span class="k">intro</span> y z h
+         <span class="k">cases</span> hz : Beval z b <span class="k">with</span>
+         | some v =&gt;
+             <span class="k">have</span> hy : Beval y b = some v := Beval_increasing h b hz
+             <span class="k">cases</span> v
+             · <span class="k">simp</span> only [hy, hz]; <span class="k">exact</span> (CexecM c₂).2 _ _ h
+             · <span class="k">simp</span> only [hy, hz]; <span class="k">exact</span> (CexecM c₁).2 _ _ h
+         | none =&gt;
+             <span class="k">cases</span> hy : Beval y b <span class="k">with</span>
+             | some v =&gt;
+                 <span class="k">cases</span> v
+                 · <span class="k">simp</span> only [hy, hz]
+                   <span class="k">exact</span> Le.trans ((CexecM c₂).2 _ _ h) (Le_join_right _ _)
+                 · <span class="k">simp</span> only [hy, hz]
+                   <span class="k">exact</span> Le.trans ((CexecM c₁).2 _ _ h) (Le_join_left _ _)
+             | none =&gt;
+                 <span class="k">simp</span> only [hy, hz]
+                 <span class="k">exact</span> join_increasing ((CexecM c₁).2 _ _ h) ((CexecM c₂).2 _ _ h)⟩
+  | .<span class="k">while</span> _ c₁ =&gt;
+      ⟨<span class="k">fun</span> S =&gt; fixpointJoin S (CexecM c₁).1 (CexecM c₁).2,
+       <span class="k">fun</span> _ _ h =&gt; fixpointJoin_increasing _ _ h⟩
+
+<span class="k">end</span> Fixpoints</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>CompilerVerification/Fixpoints.lean</code>.
+</div>
+</body>
+</html>

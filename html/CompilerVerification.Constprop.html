@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CompilerVerification.Constprop</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.Compil.html">&larr; CompilerVerification.Compil</a> &nbsp; <a href="CompilerVerification.Deadcode.html">CompilerVerification.Deadcode &rarr;</a></span>
+</div>
+<h1 class="modname">CompilerVerification.Constprop</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-constant-propagation">Constant propagation</a></li><li class="l2"><a href="#sec-smart-constructors-for-expressions">Smart constructors for expressions</a></li><li class="l3"><a href="#sec-smart-constructors-for-boolean-expressions">Smart constructors for Boolean expressions</a></li><li class="l3"><a href="#sec-smart-constructors-for-commands">Smart constructors for commands</a></li><li class="l2"><a href="#sec-abstract-stores">Abstract stores</a></li><li class="l3"><a href="#sec-the-lattice-structure">The lattice structure</a></li><li class="l2"><a href="#sec-abstract-evaluation-of-expressions">Abstract evaluation of expressions</a></li><li class="l2"><a href="#sec-the-analysis">The analysis</a></li><li class="l2"><a href="#sec-the-optimisation">The optimisation</a></li></ul></div>
+<div class="content">
+<div class="license">  Constant propagation: a forward dataflow analysis and the optimisation<br>  built on it.<br><br>  Lean 4 port of `Constprop.v` from the Coq development accompanying<br>  Xavier Leroy, *Proving the correctness of a compiler*,<br>  EUTypes 2019 Summer School.<br><br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the definitions and theorem statements follow<br>  the Coq originals, but all proofs and explanatory text have been rewritten<br>  for Lean 4.  Coq&#x27;s `FMaps` library has no counterpart in Lean&#x27;s core<br>  library, so abstract stores are implemented here as association lists.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.</div>
+<pre class="code"><span class="k">import</span> CompilerVerification.IMP</pre>
+<div class="doc"><h2 id="sec-constant-propagation">Constant propagation</h2>
+<p>Two ingredients:</p>
+<ul><li><strong>smart constructors</strong> — functions that build an expression equivalent to the one asked for, but simplified on the fly, so that <code>PLUS a (CONST 0)</code> never gets built in the first place;</li><li>a <strong>static analysis</strong> that computes, for each program point, which variables are known to hold which constants.</li></ul>
+<p>Combining them gives the optimisation <code>cpCom</code>, and we prove that it preserves the behaviour of terminating programs.</p>
+<p>The analysis is an instance of abstract interpretation.  We follow the usual notational convention: capitalised names (<code>AStore</code>, <code>Aeval</code>, <code>Cexec</code>) denote compile-time approximations, lower-case names (<code>Store</code>, <code>aeval</code>, <code>cexec</code>) denote the run-time objects they approximate.</p></div>
+<pre class="code"><span class="k">namespace</span> Constprop
+
+<span class="k">open</span> IMP</pre>
+<div class="doc"><h3 id="sec-smart-constructors-for-expressions">Smart constructors for expressions</h3></div>
+<div class="doc decl"><p>Build an expression equivalent to <code>a + n</code>, simplified.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="mkPlusConst"><a class="anchor" href="#mkPlusConst">mkPlusConst</a></span> (a : aexp) (n : Int) : aexp :=
+  <span class="k">if</span> n = 0 <span class="k">then</span> a <span class="k">else</span>
+    <span class="k">match</span> a <span class="k">with</span>
+    | .const m =&gt; .const (m + n)
+    | .plus a (.const m) =&gt; .plus a (.const (m + n))
+    | _ =&gt; .plus a (.const n)</pre>
+<div class="doc decl"><p>Build an expression equivalent to <code>a₁ + a₂</code>, simplified.  Associativity and commutativity are used to expose the pattern &quot;expression plus constant&quot;, which <code>mkPlusConst</code> then collapses.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="mkPlus"><a class="anchor" href="#mkPlus">mkPlus</a></span> (a₁ a₂ : aexp) : aexp :=
+  <span class="k">match</span> a₁, a₂ <span class="k">with</span>
+  | .const m, _ =&gt; mkPlusConst a₂ m
+  | _, .const m =&gt; mkPlusConst a₁ m
+  | .plus b₁ (.const m₁), .plus b₂ (.const m₂) =&gt; mkPlusConst (.plus b₁ b₂) (m₁ + m₂)
+  | .plus b₁ (.const m₁), _ =&gt; mkPlusConst (.plus b₁ a₂) m₁
+  | _, .plus b₂ (.const m₂) =&gt; mkPlusConst (.plus a₁ b₂) m₂
+  | _, _ =&gt; .plus a₁ a₂</pre>
+<div class="doc decl"><p>Build an expression equivalent to <code>a₁ - a₂</code>, simplified.  Note that &quot;expression minus constant&quot; is always normalised to &quot;expression plus the opposite constant&quot;, which keeps the case analysis small.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="mkMinus"><a class="anchor" href="#mkMinus">mkMinus</a></span> (a₁ a₂ : aexp) : aexp :=
+  <span class="k">match</span> a₁, a₂ <span class="k">with</span>
+  | _, .const m =&gt; mkPlusConst a₁ (-m)
+  | .plus b₁ (.const m₁), .plus b₂ (.const m₂) =&gt; mkPlusConst (.minus b₁ b₂) (m₁ - m₂)
+  | .plus b₁ (.const m₁), _ =&gt; mkPlusConst (.minus b₁ a₂) m₁
+  | _, .plus b₂ (.const m₂) =&gt; mkPlusConst (.minus a₁ b₂) (-m₂)
+  | _, _ =&gt; .minus a₁ a₂</pre>
+<div class="doc decl"><p>Simplify an expression by rewriting it bottom-up with the smart constructors.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="simplifAexp"><a class="anchor" href="#simplifAexp">simplifAexp</a></span> : aexp → aexp
+  | .const n =&gt; .const n
+  | .var x =&gt; .var x
+  | .plus a₁ a₂ =&gt; mkPlus (simplifAexp a₁) (simplifAexp a₂)
+  | .minus a₁ a₂ =&gt; mkMinus (simplifAexp a₁) (simplifAexp a₂)
+
+<span class="k">example</span> : <span class="d" id="simplifAexp"><a class="anchor" href="#simplifAexp">simplifAexp</a></span> (.minus (.plus (.var <span class="s">&quot;x&quot;</span>) (.const 1)) (.plus (.var <span class="s">&quot;y&quot;</span>) (.const 1)))
+    = .minus (.var <span class="s">&quot;x&quot;</span>) (.var <span class="s">&quot;y&quot;</span>) := <span class="k">by</span> native_decide</pre>
+<div class="doc decl"><p>Soundness of the smart constructors: they build expressions that denote what they claim to denote.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="mkPlusConst_sound"><a class="anchor" href="#mkPlusConst_sound">mkPlusConst_sound</a></span> (s : Store) (a : aexp) (n : Int) :
+    aeval s (mkPlusConst a n) = aeval s a + n := <span class="k">by</span>
+  unfold mkPlusConst
+  split
+  · <span class="k">omega</span>
+  · split &lt;;&gt; <span class="k">simp</span> [aeval] &lt;;&gt; <span class="k">omega</span>
+
+<span class="k">theorem</span> <span class="d" id="mkPlus_sound"><a class="anchor" href="#mkPlus_sound">mkPlus_sound</a></span> (s : Store) (a₁ a₂ : aexp) :
+    aeval s (mkPlus a₁ a₂) = aeval s a₁ + aeval s a₂ := <span class="k">by</span>
+  unfold mkPlus
+  split &lt;;&gt; <span class="k">simp</span> [mkPlusConst_sound, aeval] &lt;;&gt; <span class="k">omega</span>
+
+<span class="k">theorem</span> <span class="d" id="mkMinus_sound"><a class="anchor" href="#mkMinus_sound">mkMinus_sound</a></span> (s : Store) (a₁ a₂ : aexp) :
+    aeval s (mkMinus a₁ a₂) = aeval s a₁ - aeval s a₂ := <span class="k">by</span>
+  unfold mkMinus
+  split &lt;;&gt; <span class="k">simp</span> [mkPlusConst_sound, aeval] &lt;;&gt; <span class="k">omega</span>
+
+<span class="k">theorem</span> <span class="d" id="simplifAexp_sound"><a class="anchor" href="#simplifAexp_sound">simplifAexp_sound</a></span> (s : Store) : ∀ a : aexp, aeval s (simplifAexp a) = aeval s a
+  | .const _ =&gt; <span class="k">rfl</span>
+  | .var _ =&gt; <span class="k">rfl</span>
+  | .plus a₁ a₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [simplifAexp, mkPlus_sound, simplifAexp_sound s a₁, simplifAexp_sound s a₂, aeval]
+  | .minus a₁ a₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [simplifAexp, mkMinus_sound, simplifAexp_sound s a₁, simplifAexp_sound s a₂, aeval]</pre>
+<div class="doc"><h4 id="sec-smart-constructors-for-boolean-expressions">Smart constructors for Boolean expressions</h4></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="mkEqual"><a class="anchor" href="#mkEqual">mkEqual</a></span> (a₁ a₂ : aexp) : bexp :=
+  <span class="k">match</span> a₁, a₂ <span class="k">with</span>
+  | .const n₁, .const n₂ =&gt; <span class="k">if</span> n₁ = n₂ <span class="k">then</span> .true <span class="k">else</span> .false
+  | .plus b₁ (.const n₁), .const n₂ =&gt; .equal b₁ (.const (n₂ - n₁))
+  | _, _ =&gt; .equal a₁ a₂
+
+<span class="k">def</span> <span class="d" id="mkLessequal"><a class="anchor" href="#mkLessequal">mkLessequal</a></span> (a₁ a₂ : aexp) : bexp :=
+  <span class="k">match</span> a₁, a₂ <span class="k">with</span>
+  | .const n₁, .const n₂ =&gt; <span class="k">if</span> n₁ ≤ n₂ <span class="k">then</span> .true <span class="k">else</span> .false
+  | .plus b₁ (.const n₁), .const n₂ =&gt; .lessequal b₁ (.const (n₂ - n₁))
+  | _, _ =&gt; .lessequal a₁ a₂
+
+<span class="k">def</span> <span class="d" id="mkNot"><a class="anchor" href="#mkNot">mkNot</a></span> : bexp → bexp
+  | .true =&gt; .false
+  | .false =&gt; .true
+  | .not b =&gt; b
+  | b =&gt; .not b
+
+<span class="k">def</span> <span class="d" id="mkAnd"><a class="anchor" href="#mkAnd">mkAnd</a></span> : bexp → bexp → bexp
+  | .true, b₂ =&gt; b₂
+  | b₁, .true =&gt; b₁
+  | .false, _ =&gt; .false
+  | _, .false =&gt; .false
+  | b₁, b₂ =&gt; .and b₁ b₂
+
+<span class="k">theorem</span> <span class="d" id="mkEqual_sound"><a class="anchor" href="#mkEqual_sound">mkEqual_sound</a></span> (s : Store) (a₁ a₂ : aexp) :
+    beval s (mkEqual a₁ a₂) = (aeval s a₁ == aeval s a₂) := <span class="k">by</span>
+  unfold mkEqual
+  split
+  · split &lt;;&gt; simp_all [beval, aeval]
+  · <span class="k">simp</span> only [beval, aeval]
+    rw [Bool.eq_iff_iff]; <span class="k">simp</span> only [beq_iff_eq]; <span class="k">omega</span>
+  · <span class="k">rfl</span>
+
+<span class="k">theorem</span> <span class="d" id="mkLessequal_sound"><a class="anchor" href="#mkLessequal_sound">mkLessequal_sound</a></span> (s : Store) (a₁ a₂ : aexp) :
+    beval s (mkLessequal a₁ a₂) = decide (aeval s a₁ ≤ aeval s a₂) := <span class="k">by</span>
+  unfold mkLessequal
+  split
+  · split &lt;;&gt; rename_i h &lt;;&gt; <span class="k">simp</span> [beval, aeval, h]
+  · rename_i b₁ n₁ n₂
+    <span class="k">have</span> h : (aeval s b₁ ≤ n₂ - n₁) ↔ (aeval s b₁ + n₁ ≤ n₂) := <span class="k">by</span> <span class="k">omega</span>
+    <span class="k">simp</span> only [beval, aeval, h]
+    <span class="k">rfl</span>
+  · <span class="k">rfl</span>
+
+<span class="k">theorem</span> <span class="d" id="mkNot_sound"><a class="anchor" href="#mkNot_sound">mkNot_sound</a></span> (s : Store) (b : bexp) : beval s (mkNot b) = !beval s b := <span class="k">by</span>
+  unfold mkNot; split &lt;;&gt; <span class="k">simp</span> [beval]
+
+<span class="k">theorem</span> <span class="d" id="mkAnd_sound"><a class="anchor" href="#mkAnd_sound">mkAnd_sound</a></span> (s : Store) (b₁ b₂ : bexp) :
+    beval s (mkAnd b₁ b₂) = (beval s b₁ &amp;&amp; beval s b₂) := <span class="k">by</span>
+  unfold mkAnd; split &lt;;&gt; <span class="k">simp</span> [beval]</pre>
+<div class="doc"><h4 id="sec-smart-constructors-for-commands">Smart constructors for commands</h4>
+<p>Commands benefit too: a conditional whose test is statically known needs no code at all.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="mkIfthenelse"><a class="anchor" href="#mkIfthenelse">mkIfthenelse</a></span> (b : bexp) (c₁ c₂ : com) : com :=
+  <span class="k">match</span> b <span class="k">with</span>
+  | .true =&gt; c₁
+  | .false =&gt; c₂
+  | _ =&gt; .ifthenelse b c₁ c₂
+
+<span class="k">def</span> <span class="d" id="mkWhile"><a class="anchor" href="#mkWhile">mkWhile</a></span> (b : bexp) (c : com) : com :=
+  <span class="k">match</span> b <span class="k">with</span>
+  | .false =&gt; .skip
+  | _ =&gt; .<span class="k">while</span> b c
+
+<span class="k">theorem</span> <span class="d" id="cexec_mkIfthenelse"><a class="anchor" href="#cexec_mkIfthenelse">cexec_mkIfthenelse</a></span> {s₁ : Store} {b : bexp} {c₁ c₂ : com} {s₂ : Store}
+    (h : cexec s₁ (<span class="k">if</span> beval s₁ b <span class="k">then</span> c₁ <span class="k">else</span> c₂) s₂) : cexec s₁ (mkIfthenelse b c₁ c₂) s₂ := <span class="k">by</span>
+  unfold mkIfthenelse
+  split
+  · subst_vars; simpa [beval] <span class="k">using</span> h
+  · subst_vars; simpa [beval] <span class="k">using</span> h
+  · <span class="k">exact</span> .ifthenelse h
+
+<span class="k">theorem</span> <span class="d" id="cexec_mkWhile_done"><a class="anchor" href="#cexec_mkWhile_done">cexec_mkWhile_done</a></span> {s₁ : Store} {b : bexp} {c : com} (h : beval s₁ b = false) :
+    cexec s₁ (mkWhile b c) s₁ := <span class="k">by</span>
+  unfold mkWhile
+  split
+  · <span class="k">exact</span> .skip _
+  · <span class="k">exact</span> .while_done h
+
+<span class="k">theorem</span> <span class="d" id="cexec_mkWhile_loop"><a class="anchor" href="#cexec_mkWhile_loop">cexec_mkWhile_loop</a></span> {b : bexp} {c : com} {s₁ s₂ s₃ : Store}
+    (hb : beval s₁ b = true) (h₁ : cexec s₁ c s₂) (h₂ : cexec s₂ (mkWhile b c) s₃) :
+    cexec s₁ (mkWhile b c) s₃ := <span class="k">by</span>
+  revert h₂
+  unfold mkWhile
+  split
+  · subst_vars; <span class="k">simp</span> [beval] <span class="k">at</span> hb
+  · <span class="k">exact</span> <span class="k">fun</span> h₂ =&gt; .while_loop hb h₁ h₂</pre>
+<div class="doc"><h3 id="sec-abstract-stores">Abstract stores</h3>
+<p>An <em>abstract store</em> records what the analysis knows before or after a program point: if it maps <code>x</code> to <code>n</code>, then <code>x</code> certainly holds <code>n</code> at run time; if it maps <code>x</code> to nothing, then <code>x</code> may hold anything.  So <em>less information</em> means <em>larger</em> in the lattice order, and the top element is the empty map.</p>
+<p>Coq&#x27;s development uses the <code>FMaps</code> library.  Lean&#x27;s core library has no finite maps, so we use association lists and prove the handful of facts we need. Nothing below depends on the representation beyond those facts.</p></div>
+<div class="doc decl"><p>An abstract store: a finite map from variables to known values.</p></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="AStore"><a class="anchor" href="#AStore">AStore</a></span> := List (Ident × Int)
+
+<span class="k">namespace</span> AStore</pre>
+<div class="doc decl"><p>Look up the value the analysis knows for <code>x</code>, if any.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="find"><a class="anchor" href="#find">find</a></span> : AStore → Ident → Option Int
+  | [], _ =&gt; none
+  | (y, n) :: S, x =&gt; <span class="k">if</span> x = y <span class="k">then</span> some n <span class="k">else</span> find S x
+
+<span class="k">def</span> <span class="d" id="keys"><a class="anchor" href="#keys">keys</a></span> (S : AStore) : List Ident := S.map Prod.fst</pre>
+<div class="doc decl"><p>Build an abstract store from a list of keys and a partial value assignment.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="ofKeys"><a class="anchor" href="#ofKeys">ofKeys</a></span> : List Ident → (Ident → Option Int) → AStore
+  | [], _ =&gt; []
+  | x :: ks, f =&gt;
+      <span class="k">match</span> f x <span class="k">with</span>
+      | some n =&gt; (x, n) :: ofKeys ks f
+      | none =&gt; ofKeys ks f
+
+<span class="k">theorem</span> <span class="d" id="find_isSome_iff"><a class="anchor" href="#find_isSome_iff">find_isSome_iff</a></span> (S : AStore) (x : Ident) :
+    (S.find x).isSome = true ↔ x ∈ S.keys := <span class="k">by</span>
+  <span class="k">induction</span> S <span class="k">with</span>
+  | nil =&gt; <span class="k">simp</span> [find, keys]
+  | cons p S ih =&gt;
+      <span class="k">obtain</span> ⟨y, n⟩ := p
+      by_cases h : x = y &lt;;&gt; <span class="k">simp</span> [find, keys, h, ih]
+
+<span class="k">theorem</span> <span class="d" id="find_eq_none_of_not_mem"><a class="anchor" href="#find_eq_none_of_not_mem">find_eq_none_of_not_mem</a></span> {S : AStore} {x : Ident} (h : x ∉ S.keys) :
+    S.find x = none := <span class="k">by</span>
+  <span class="k">cases</span> hf : S.find x <span class="k">with</span>
+  | none =&gt; <span class="k">rfl</span>
+  | some n =&gt; <span class="k">exact</span> absurd ((find_isSome_iff S x).mp (<span class="k">by</span> <span class="k">simp</span> [hf])) h
+
+<span class="k">theorem</span> <span class="d" id="find_ofKeys"><a class="anchor" href="#find_ofKeys">find_ofKeys</a></span> (ks : List Ident) (f : Ident → Option Int) (x : Ident) :
+    (ofKeys ks f).find x = <span class="k">if</span> x ∈ ks <span class="k">then</span> f x <span class="k">else</span> none := <span class="k">by</span>
+  <span class="k">induction</span> ks <span class="k">with</span>
+  | nil =&gt; <span class="k">simp</span> [ofKeys, find]
+  | cons y ks ih =&gt;
+      <span class="k">simp</span> only [ofKeys]
+      <span class="k">cases</span> hf : f y <span class="k">with</span>
+      | none =&gt;
+          rw [ih]
+          by_cases hxy : x = y
+          · <span class="k">subst</span> hxy; <span class="k">simp</span> [hf]
+          · <span class="k">simp</span> [hxy]
+      | some n =&gt;
+          by_cases hxy : x = y
+          · <span class="k">subst</span> hxy; <span class="k">simp</span> [find, hf]
+          · <span class="k">simp</span> [find, hxy, ih]</pre>
+<div class="doc decl"><p>The top element: nothing is known about any variable.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="top"><a class="anchor" href="#top">top</a></span> : AStore := []
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="find_top"><a class="anchor" href="#find_top">find_top</a></span> (x : Ident) : top.find x = none := <span class="k">rfl</span></pre>
+<div class="doc decl"><p>The join of two abstract stores keeps only the facts they agree on.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="join"><a class="anchor" href="#join">join</a></span> (S₁ S₂ : AStore) : AStore :=
+  ofKeys S₁.keys (<span class="k">fun</span> x =&gt;
+    <span class="k">match</span> S₁.find x, S₂.find x <span class="k">with</span>
+    | some n₁, some n₂ =&gt; <span class="k">if</span> n₁ = n₂ <span class="k">then</span> some n₁ <span class="k">else</span> none
+    | _, _ =&gt; none)
+
+<span class="k">theorem</span> <span class="d" id="find_join"><a class="anchor" href="#find_join">find_join</a></span> (S₁ S₂ : AStore) (x : Ident) (n : Int) :
+    (join S₁ S₂).find x = some n ↔ S₁.find x = some n ∧ S₂.find x = some n := <span class="k">by</span>
+  rw [join, find_ofKeys]
+  by_cases hx : x ∈ S₁.keys
+  · <span class="k">simp</span> only [hx, if_true]
+    <span class="k">cases</span> h₁ : S₁.find x <span class="k">with</span>
+    | none =&gt; <span class="k">simp</span>
+    | some n₁ =&gt;
+        <span class="k">cases</span> h₂ : S₂.find x <span class="k">with</span>
+        | none =&gt; <span class="k">simp</span>
+        | some n₂ =&gt; by_cases he : n₁ = n₂ &lt;;&gt; <span class="k">simp</span> [he] &lt;;&gt; <span class="k">omega</span>
+  · <span class="k">simp</span> [hx, find_eq_none_of_not_mem hx]</pre>
+<div class="doc decl"><p>Update an abstract store: <code>some n</code> records that <code>x</code> holds <code>n</code>, <code>none</code> records that nothing is known about <code>x</code> any more.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="update"><a class="anchor" href="#update">update</a></span> (x : Ident) (N : Option Int) (S : AStore) : AStore :=
+  <span class="k">match</span> N <span class="k">with</span>
+  | none =&gt; S.filter (<span class="k">fun</span> p =&gt; !(p.1 == x))
+  | some n =&gt; (x, n) :: S
+
+<span class="k">set_option</span> linter.unusedSimpArgs false <span class="k">in</span>
+<span class="k">theorem</span> <span class="d" id="find_filter"><a class="anchor" href="#find_filter">find_filter</a></span> (S : AStore) (x y : Ident) :
+    find (S.filter (<span class="k">fun</span> p =&gt; !(p.1 == x))) y = <span class="k">if</span> y = x <span class="k">then</span> none <span class="k">else</span> find S y := <span class="k">by</span>
+  <span class="k">induction</span> S <span class="k">with</span>
+  | nil =&gt; by_cases h : y = x &lt;;&gt; <span class="k">simp</span> [find, h]
+  | cons p S ih =&gt;
+      <span class="k">obtain</span> ⟨z, m⟩ := p
+      by_cases hzx : z = x
+      · <span class="k">subst</span> hzx
+        by_cases hyz : y = z
+        · <span class="k">subst</span> hyz; <span class="k">simp</span> [ih]
+        · <span class="k">simp</span> [find, hyz, ih]
+      · by_cases hyz : y = z
+        · <span class="k">subst</span> hyz; <span class="k">simp</span> [List.filter_cons, find, hzx]
+        · <span class="k">simp</span> [find, hyz, hzx, ih]
+
+<span class="k">theorem</span> <span class="d" id="find_update"><a class="anchor" href="#find_update">find_update</a></span> (S : AStore) (x : Ident) (N : Option Int) (y : Ident) :
+    (update x N S).find y = <span class="k">if</span> y = x <span class="k">then</span> N <span class="k">else</span> S.find y := <span class="k">by</span>
+  <span class="k">cases</span> N <span class="k">with</span>
+  | some n =&gt; by_cases h : y = x &lt;;&gt; <span class="k">simp</span> [update, find, h]
+  | none =&gt; simpa [update] <span class="k">using</span> find_filter S x y</pre>
+<div class="doc decl"><p>Structural equality test on abstract stores, used to detect that the fixpoint iteration has stabilised.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="equal"><a class="anchor" href="#equal">equal</a></span> (S₁ S₂ : AStore) : Bool :=
+  (S₁.keys ++ S₂.keys).all (<span class="k">fun</span> x =&gt; S₁.find x == S₂.find x)
+
+<span class="k">theorem</span> <span class="d" id="equal_find"><a class="anchor" href="#equal_find">equal_find</a></span> {S₁ S₂ : AStore} (h : equal S₁ S₂ = true) (x : Ident) :
+    S₁.find x = S₂.find x := <span class="k">by</span>
+  by_cases hx : x ∈ S₁.keys ++ S₂.keys
+  · <span class="k">simp</span> only [equal, List.all_eq_true] <span class="k">at</span> h
+    simpa <span class="k">using</span> h x hx
+  · <span class="k">simp</span> only [List.mem_append, not_or] <span class="k">at</span> hx
+    rw [find_eq_none_of_not_mem hx.1, find_eq_none_of_not_mem hx.2]
+
+<span class="k">end</span> AStore</pre>
+<div class="doc"><h4 id="sec-the-lattice-structure">The lattice structure</h4>
+<p><code>Le S₁ S₂</code> says that <code>S₁</code> is at least as precise as <code>S₂</code>: every fact recorded by <code>S₂</code> is also recorded by <code>S₁</code>.  <code>Matches s S</code> says that the concrete store <code>s</code> is one of the stores described by <code>S</code> — the abstract-interpretation analogue of &quot;a term has a type&quot;.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Le"><a class="anchor" href="#Le">Le</a></span> (S₁ S₂ : AStore) : Prop := ∀ x n, S₂.find x = some n → S₁.find x = some n
+
+<span class="k">def</span> <span class="d" id="Matches"><a class="anchor" href="#Matches">Matches</a></span> (s : Store) (S : AStore) : Prop := ∀ x n, S.find x = some n → s x = n
+
+<span class="k">theorem</span> <span class="d" id="Matches.mono"><a class="anchor" href="#Matches.mono">Matches.mono</a></span> {s : Store} {S₁ S₂ : AStore} (hle : Le S₁ S₂) (h : Matches s S₁) :
+    Matches s S₂ := <span class="k">fun</span> x n hf =&gt; h x n (hle x n hf)
+
+<span class="k">theorem</span> <span class="d" id="Le.trans"><a class="anchor" href="#Le.trans">Le.trans</a></span> {S₁ S₂ S₃ : AStore} (h₁ : Le S₁ S₂) (h₂ : Le S₂ S₃) : Le S₁ S₃ :=
+  <span class="k">fun</span> x n hf =&gt; h₁ x n (h₂ x n hf)
+
+<span class="k">theorem</span> <span class="d" id="Le_top"><a class="anchor" href="#Le_top">Le_top</a></span> (S : AStore) : Le S AStore.top := <span class="k">fun</span> _ _ hf =&gt; <span class="k">by</span> <span class="k">simp</span> <span class="k">at</span> hf
+
+<span class="k">theorem</span> <span class="d" id="Le_join_left"><a class="anchor" href="#Le_join_left">Le_join_left</a></span> (S₁ S₂ : AStore) : Le S₁ (AStore.join S₁ S₂) :=
+  <span class="k">fun</span> x n hf =&gt; ((AStore.find_join S₁ S₂ x n).mp hf).1
+
+<span class="k">theorem</span> <span class="d" id="Le_join_right"><a class="anchor" href="#Le_join_right">Le_join_right</a></span> (S₁ S₂ : AStore) : Le S₂ (AStore.join S₁ S₂) :=
+  <span class="k">fun</span> x n hf =&gt; ((AStore.find_join S₁ S₂ x n).mp hf).2
+
+<span class="k">theorem</span> <span class="d" id="equal_Le"><a class="anchor" href="#equal_Le">equal_Le</a></span> {S₁ S₂ : AStore} (h : AStore.equal S₁ S₂ = true) : Le S₁ S₂ :=
+  <span class="k">fun</span> x n hf =&gt; <span class="k">by</span> rw [AStore.equal_find h x]; <span class="k">exact</span> hf</pre>
+<div class="doc"><h3 id="sec-abstract-evaluation-of-expressions">Abstract evaluation of expressions</h3>
+<p><code>Aeval S a</code> returns <code>some v</code> when the value of <code>a</code> can be determined from what <code>S</code> knows, and <code>none</code> otherwise.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Aeval"><a class="anchor" href="#Aeval">Aeval</a></span> (S : AStore) : aexp → Option Int
+  | .const n =&gt; some n
+  | .var x =&gt; S.find x
+  | .plus a₁ a₂ =&gt;
+      <span class="k">match</span> Aeval S a₁, Aeval S a₂ <span class="k">with</span>
+      | some n₁, some n₂ =&gt; some (n₁ + n₂)
+      | _, _ =&gt; none
+  | .minus a₁ a₂ =&gt;
+      <span class="k">match</span> Aeval S a₁, Aeval S a₂ <span class="k">with</span>
+      | some n₁, some n₂ =&gt; some (n₁ - n₂)
+      | _, _ =&gt; none
+
+<span class="k">def</span> <span class="d" id="Beval"><a class="anchor" href="#Beval">Beval</a></span> (S : AStore) : bexp → Option Bool
+  | .true =&gt; some Bool.true
+  | .false =&gt; some Bool.false
+  | .equal a₁ a₂ =&gt;
+      <span class="k">match</span> Aeval S a₁, Aeval S a₂ <span class="k">with</span>
+      | some n₁, some n₂ =&gt; some (n₁ == n₂)
+      | _, _ =&gt; none
+  | .lessequal a₁ a₂ =&gt;
+      <span class="k">match</span> Aeval S a₁, Aeval S a₂ <span class="k">with</span>
+      | some n₁, some n₂ =&gt; some (decide (n₁ ≤ n₂))
+      | _, _ =&gt; none
+  | .not b₁ =&gt; (Beval S b₁).map (! ·)
+  | .and b₁ b₂ =&gt;
+      <span class="k">match</span> Beval S b₁, Beval S b₂ <span class="k">with</span>
+      | some v₁, some v₂ =&gt; some (v₁ &amp;&amp; v₂)
+      | _, _ =&gt; none
+
+<span class="k">theorem</span> <span class="d" id="Aeval_sound"><a class="anchor" href="#Aeval_sound">Aeval_sound</a></span> {s : Store} {S : AStore} (hm : Matches s S) :
+    ∀ (a : aexp) {n : Int}, Aeval S a = some n → aeval s a = n
+  | .const m, n, h =&gt; <span class="k">by</span> <span class="k">simp</span> only [Aeval, Option.some.injEq] <span class="k">at</span> h; <span class="k">simp</span> [aeval, h]
+  | .var x, n, h =&gt; hm x n h
+  | .plus a₁ a₂, n, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Aeval] <span class="k">at</span> h
+      <span class="k">cases</span> h₁ : Aeval S a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+              <span class="k">simp</span> [aeval, Aeval_sound hm a₁ h₁, Aeval_sound hm a₂ h₂, ← h]
+  | .minus a₁ a₂, n, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Aeval] <span class="k">at</span> h
+      <span class="k">cases</span> h₁ : Aeval S a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+              <span class="k">simp</span> [aeval, Aeval_sound hm a₁ h₁, Aeval_sound hm a₂ h₂, ← h]
+
+<span class="k">theorem</span> <span class="d" id="Beval_sound"><a class="anchor" href="#Beval_sound">Beval_sound</a></span> {s : Store} {S : AStore} (hm : Matches s S) :
+    ∀ (b : bexp) {v : Bool}, Beval S b = some v → beval s b = v
+  | .true, v, h =&gt; <span class="k">by</span> <span class="k">simp</span> only [Beval, Option.some.injEq] <span class="k">at</span> h; <span class="k">simp</span> [beval, h]
+  | .false, v, h =&gt; <span class="k">by</span> <span class="k">simp</span> only [Beval, Option.some.injEq] <span class="k">at</span> h; <span class="k">simp</span> [beval, h]
+  | .equal a₁ a₂, v, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> h
+      <span class="k">cases</span> h₁ : Aeval S a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+              <span class="k">simp</span> [beval, Aeval_sound hm a₁ h₁, Aeval_sound hm a₂ h₂, ← h]
+  | .lessequal a₁ a₂, v, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> h
+      <span class="k">cases</span> h₁ : Aeval S a₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+      | some n₁ =&gt;
+          <span class="k">cases</span> h₂ : Aeval S a₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+          | some n₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+              <span class="k">simp</span> [beval, Aeval_sound hm a₁ h₁, Aeval_sound hm a₂ h₂, ← h]
+  | .not b₁, v, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> h
+      <span class="k">cases</span> h₁ : Beval S b₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+      | some v₁ =&gt;
+          rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+          <span class="k">simp</span> [beval, Beval_sound hm b₁ h₁, ← h]
+  | .and b₁ b₂, v, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [Beval] <span class="k">at</span> h
+      <span class="k">cases</span> h₁ : Beval S b₁ <span class="k">with</span>
+      | none =&gt; rw [h₁] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+      | some v₁ =&gt;
+          <span class="k">cases</span> h₂ : Beval S b₂ <span class="k">with</span>
+          | none =&gt; rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+          | some v₂ =&gt;
+              rw [h₁, h₂] <span class="k">at</span> h; <span class="k">simp</span> <span class="k">at</span> h
+              <span class="k">simp</span> [beval, Beval_sound hm b₁ h₁, Beval_sound hm b₂ h₂, ← h]
+
+<span class="k">theorem</span> <span class="d" id="Matches.update"><a class="anchor" href="#Matches.update">Matches.update</a></span> {s : Store} {S : AStore} {x : Ident} {n : Int} {N : Option Int}
+    (hm : Matches s S) (hN : ∀ i, N = some i → n = i) :
+    Matches (IMP.update x n s) (AStore.update x N S) := <span class="k">by</span>
+  <span class="k">intro</span> y m hf
+  rw [AStore.find_update] <span class="k">at</span> hf
+  by_cases hyx : y = x
+  · <span class="k">subst</span> hyx; <span class="k">simp</span> only [if_true] <span class="k">at</span> hf
+    <span class="k">simp</span> [IMP.update, hN m hf]
+  · <span class="k">simp</span> only [hyx, if_false] <span class="k">at</span> hf
+    <span class="k">simp</span> [IMP.update, hyx, hm y m hf]</pre>
+<div class="doc"><h3 id="sec-the-analysis">The analysis</h3>
+<p>To analyse a loop we must find a fixpoint of a function from abstract stores to abstract stores — intuitively, running the loop &quot;in the abstract&quot; until the abstract state stops changing.  Guaranteeing termination of that search takes real work; see <code>Fixpoints.lean</code>.  For now we use the engineer&#x27;s answer: iterate a fixed number of times and fall back to <code>top</code> (know nothing) if no fixpoint has appeared.  That is sound, if imprecise, which is all the correctness proof needs.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="fixpointRec"><a class="anchor" href="#fixpointRec">fixpointRec</a></span> (F : AStore → AStore) : Nat → AStore → AStore
+  | 0, _ =&gt; AStore.top
+  | fuel + 1, S =&gt; <span class="k">if</span> AStore.equal (F S) S <span class="k">then</span> S <span class="k">else</span> fixpointRec F fuel (F S)
+
+<span class="k">def</span> <span class="d" id="numIter"><a class="anchor" href="#numIter">numIter</a></span> : Nat := 20
+
+<span class="k">def</span> <span class="d" id="fixpoint"><a class="anchor" href="#fixpoint">fixpoint</a></span> (F : AStore → AStore) (initS : AStore) : AStore := fixpointRec F numIter initS</pre>
+<div class="doc decl"><p>Whatever <code>fixpoint</code> returns is a post-fixpoint: <code>F S ≤ S</code>.  That is the only property the soundness proof uses.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="fixpoint_sound"><a class="anchor" href="#fixpoint_sound">fixpoint_sound</a></span> (F : AStore → AStore) (initS : AStore) :
+    Le (F (fixpoint F initS)) (fixpoint F initS) := <span class="k">by</span>
+  <span class="k">have</span> key : ∀ (fuel : Nat) (S : AStore),
+      fixpointRec F fuel S = AStore.top
+      ∨ AStore.equal (F (fixpointRec F fuel S)) (fixpointRec F fuel S) = true := <span class="k">by</span>
+    <span class="k">intro</span> fuel
+    <span class="k">induction</span> fuel <span class="k">with</span>
+    | zero =&gt; <span class="k">intro</span> S; <span class="k">exact</span> .inl <span class="k">rfl</span>
+    | succ fuel ih =&gt;
+        <span class="k">intro</span> S
+        by_cases h : AStore.equal (F S) S = true
+        · <span class="k">simp</span> only [fixpointRec, if_pos h]; <span class="k">exact</span> .inr h
+        · <span class="k">simp</span> only [fixpointRec, if_neg h]; <span class="k">exact</span> ih (F S)
+  <span class="k">rcases</span> key numIter initS <span class="k">with</span> h | h
+  · rw [fixpoint, h]; <span class="k">exact</span> Le_top _
+  · <span class="k">exact</span> equal_Le h</pre>
+<div class="doc decl"><p>Abstract execution of a command: given what is known before <code>c</code>, compute what is known after it.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Cexec"><a class="anchor" href="#Cexec">Cexec</a></span> (S : AStore) (c : com) : AStore :=
+  <span class="k">match</span> c <span class="k">with</span>
+  | .skip =&gt; S
+  | .assign x a =&gt; AStore.update x (Aeval S a) S
+  | .seq c₁ c₂ =&gt; Cexec (Cexec S c₁) c₂
+  | .ifthenelse b c₁ c₂ =&gt;
+      <span class="k">match</span> Beval S b <span class="k">with</span>
+      | some Bool.true =&gt; Cexec S c₁
+      | some Bool.false =&gt; Cexec S c₂
+      | none =&gt; AStore.join (Cexec S c₁) (Cexec S c₂)
+  | .<span class="k">while</span> _ c₁ =&gt; fixpoint (<span class="k">fun</span> X =&gt; AStore.join S (Cexec X c₁)) S</pre>
+<div class="doc decl"><p>Soundness of the analysis: if the concrete store before <code>c</code> is described by <code>S</code>, then the concrete store after <code>c</code> is described by <code>Cexec S c</code>.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="Cexec_sound"><a class="anchor" href="#Cexec_sound">Cexec_sound</a></span> : ∀ (c : com) {s₁ s₂ : Store} {S₁ : AStore},
+    cexec s₁ c s₂ → Matches s₁ S₁ → Matches s₂ (Cexec S₁ c)
+  | .skip, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span> <span class="k">cases</span> hexec; <span class="k">exact</span> hm
+  | .assign x a, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">cases</span> hexec
+      <span class="k">exact</span> hm.update (<span class="k">fun</span> i hi =&gt; Aeval_sound hm a hi)
+  | .seq c₁ c₂, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">cases</span> hexec <span class="k">with</span>
+      | seq h₁ h₂ =&gt; <span class="k">exact</span> Cexec_sound c₂ h₂ (Cexec_sound c₁ h₁ hm)
+  | .ifthenelse b c₁ c₂, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">cases</span> hexec <span class="k">with</span>
+      | ifthenelse h =&gt;
+          <span class="k">simp</span> only [Cexec]
+          <span class="k">cases</span> hb : Beval S₁ b <span class="k">with</span>
+          | some v =&gt;
+              <span class="k">cases</span> v
+              · rw [Beval_sound hm b hb] <span class="k">at</span> h
+                simpa <span class="k">using</span> Cexec_sound c₂ (<span class="k">by</span> simpa <span class="k">using</span> h) hm
+              · rw [Beval_sound hm b hb] <span class="k">at</span> h
+                simpa <span class="k">using</span> Cexec_sound c₁ (<span class="k">by</span> simpa <span class="k">using</span> h) hm
+          | none =&gt;
+              <span class="k">simp</span> only []
+              <span class="k">cases</span> hbv : beval s₁ b
+              · rw [hbv] <span class="k">at</span> h
+                <span class="k">exact</span> Matches.mono (Le_join_right _ _) (Cexec_sound c₂ (<span class="k">by</span> simpa <span class="k">using</span> h) hm)
+              · rw [hbv] <span class="k">at</span> h
+                <span class="k">exact</span> Matches.mono (Le_join_left _ _) (Cexec_sound c₁ (<span class="k">by</span> simpa <span class="k">using</span> h) hm)
+  | .<span class="k">while</span> b c, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="c">-- The analysis of a loop is a fixpoint, so the proof needs an inner</span>
+      <span class="c">-- induction on the number of iterations actually performed.</span>
+      <span class="k">have</span> hpost : Le (AStore.join S₁ (Cexec (Cexec S₁ (.<span class="k">while</span> b c)) c))
+          (Cexec S₁ (.<span class="k">while</span> b c)) := fixpoint_sound _ _
+      <span class="k">have</span> inner : ∀ {t₁ : Store} {c&#x27; : com} {t₂ : Store}, cexec t₁ c&#x27; t₂ →
+          c&#x27; = com.while b c → Matches t₁ (Cexec S₁ (.<span class="k">while</span> b c)) →
+          Matches t₂ (Cexec S₁ (.<span class="k">while</span> b c)) := <span class="k">by</span>
+        <span class="k">intro</span> t₁ c&#x27; t₂ h
+        <span class="k">induction</span> h <span class="k">with</span>
+        | skip =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | assign =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | seq _ _ _ _ =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | ifthenelse _ _ =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | while_done _ =&gt; <span class="k">intro</span> _ hm&#x27;; <span class="k">exact</span> hm&#x27;
+        | @while_loop b&#x27; c&#x27;&#x27; t₁ t&#x27; t₂ hb h₁ _ _ ih₂ =&gt;
+            <span class="k">intro</span> he hm&#x27;
+            <span class="k">cases</span> he
+            <span class="k">refine</span> ih₂ <span class="k">rfl</span> ?_
+            <span class="k">exact</span> Matches.mono hpost (Matches.mono (Le_join_right _ _)
+              (Cexec_sound c h₁ hm&#x27;))
+      <span class="k">exact</span> inner hexec <span class="k">rfl</span> (Matches.mono hpost (Matches.mono (Le_join_left _ _) hm))</pre>
+<div class="doc"><h3 id="sec-the-optimisation">The optimisation</h3>
+<p>Now we use the analysis: replace each variable of known value by that value, and simplify with the smart constructors.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="cpAexp"><a class="anchor" href="#cpAexp">cpAexp</a></span> (S : AStore) : aexp → aexp
+  | .const n =&gt; .const n
+  | .var x =&gt; <span class="k">match</span> S.find x <span class="k">with</span> | some n =&gt; .const n | none =&gt; .var x
+  | .plus a₁ a₂ =&gt; mkPlus (cpAexp S a₁) (cpAexp S a₂)
+  | .minus a₁ a₂ =&gt; mkMinus (cpAexp S a₁) (cpAexp S a₂)
+
+<span class="k">def</span> <span class="d" id="cpBexp"><a class="anchor" href="#cpBexp">cpBexp</a></span> (S : AStore) : bexp → bexp
+  | .true =&gt; .true
+  | .false =&gt; .false
+  | .equal a₁ a₂ =&gt; mkEqual (cpAexp S a₁) (cpAexp S a₂)
+  | .lessequal a₁ a₂ =&gt; mkLessequal (cpAexp S a₁) (cpAexp S a₂)
+  | .not b =&gt; mkNot (cpBexp S b)
+  | .and b₁ b₂ =&gt; mkAnd (cpBexp S b₁) (cpBexp S b₂)
+
+<span class="k">theorem</span> <span class="d" id="cpAexp_sound"><a class="anchor" href="#cpAexp_sound">cpAexp_sound</a></span> {s : Store} {S : AStore} (hm : Matches s S) :
+    ∀ a : aexp, aeval s (cpAexp S a) = aeval s a
+  | .const _ =&gt; <span class="k">rfl</span>
+  | .var x =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [cpAexp]
+      <span class="k">cases</span> hf : S.find x <span class="k">with</span>
+      | none =&gt; <span class="k">rfl</span>
+      | some n =&gt; <span class="k">simp</span> [aeval, hm x n hf]
+  | .plus a₁ a₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [cpAexp, mkPlus_sound, cpAexp_sound hm a₁, cpAexp_sound hm a₂, aeval]
+  | .minus a₁ a₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [cpAexp, mkMinus_sound, cpAexp_sound hm a₁, cpAexp_sound hm a₂, aeval]
+
+<span class="k">theorem</span> <span class="d" id="cpBexp_sound"><a class="anchor" href="#cpBexp_sound">cpBexp_sound</a></span> {s : Store} {S : AStore} (hm : Matches s S) :
+    ∀ b : bexp, beval s (cpBexp S b) = beval s b
+  | .true =&gt; <span class="k">rfl</span>
+  | .false =&gt; <span class="k">rfl</span>
+  | .equal a₁ a₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [cpBexp, mkEqual_sound, cpAexp_sound hm a₁, cpAexp_sound hm a₂, beval]
+  | .lessequal a₁ a₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [cpBexp, mkLessequal_sound, cpAexp_sound hm a₁, cpAexp_sound hm a₂, beval]
+  | .not b =&gt; <span class="k">by</span> <span class="k">simp</span> [cpBexp, mkNot_sound, cpBexp_sound hm b, beval]
+  | .and b₁ b₂ =&gt; <span class="k">by</span>
+      <span class="k">simp</span> [cpBexp, mkAnd_sound, cpBexp_sound hm b₁, cpBexp_sound hm b₂, beval]</pre>
+<div class="doc decl"><p>Optimising a command.  The parameter <code>S</code> is what is known <em>before</em> <code>c</code>, so it must be updated exactly as the analysis updates it: the second half of a sequence is optimised under <code>Cexec S c₁</code>, and the body of a loop under the loop&#x27;s own fixpoint.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="cpCom"><a class="anchor" href="#cpCom">cpCom</a></span> (S : AStore) (c : com) : com :=
+  <span class="k">match</span> c <span class="k">with</span>
+  | .skip =&gt; .skip
+  | .assign x a =&gt; .assign x (cpAexp S a)
+  | .seq c₁ c₂ =&gt; .seq (cpCom S c₁) (cpCom (Cexec S c₁) c₂)
+  | .ifthenelse b c₁ c₂ =&gt; mkIfthenelse (cpBexp S b) (cpCom S c₁) (cpCom S c₂)
+  | .<span class="k">while</span> b c₁ =&gt;
+      <span class="k">let</span> sfix := Cexec S (.<span class="k">while</span> b c₁)
+      mkWhile (cpBexp sfix b) (cpCom sfix c₁)</pre>
+<div class="doc decl"><p>Optimising Euclidean division under the (dubious) assumption that the divisor is <code>0</code>: the test <code>b ≤ r</code> becomes <code>0 ≤ r</code> and <code>r := r - b</code> becomes <code>r := r</code>.</p></div>
+<pre class="code"><span class="k">example</span> : <span class="d" id="cpCom"><a class="anchor" href="#cpCom">cpCom</a></span> (AStore.update <span class="s">&quot;b&quot;</span> (some 0) AStore.top) euclideanDivision
+    = (.assign <span class="s">&quot;r&quot;</span> (.var <span class="s">&quot;a&quot;</span>) ;; .assign <span class="s">&quot;q&quot;</span> (.const 0) ;;
+       .<span class="k">while</span> (.lessequal (.const 0) (.var <span class="s">&quot;r&quot;</span>))
+         (.assign <span class="s">&quot;r&quot;</span> (.var <span class="s">&quot;r&quot;</span>) ;; .assign <span class="s">&quot;q&quot;</span> (.plus (.var <span class="s">&quot;q&quot;</span>) (.const 1)))) := <span class="k">by</span>
+  native_decide</pre>
+<div class="doc decl"><p>Semantic preservation for terminating programs.  The induction pattern is unusual: structural induction on <code>c</code>, with an inner induction on the number of iterations when <code>c</code> is a loop.  It mirrors the structure of <code>Cexec</code> itself — structural recursion plus a local fixpoint for loops.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="cpCom_correct_terminating"><a class="anchor" href="#cpCom_correct_terminating">cpCom_correct_terminating</a></span> : ∀ (c : com) {s₁ s₂ : Store} {S₁ : AStore},
+    cexec s₁ c s₂ → Matches s₁ S₁ → cexec s₁ (cpCom S₁ c) s₂
+  | .skip, s₁, s₂, S₁, hexec, _ =&gt; <span class="k">by</span> <span class="k">cases</span> hexec; <span class="k">exact</span> .skip _
+  | .assign x a, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">cases</span> hexec
+      <span class="k">have</span> := cexec.assign s₁ x (cpAexp S₁ a)
+      rwa [cpAexp_sound hm a] <span class="k">at</span> <span class="k">this</span>
+  | .seq c₁ c₂, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">cases</span> hexec <span class="k">with</span>
+      | seq h₁ h₂ =&gt;
+          <span class="k">exact</span> .seq (cpCom_correct_terminating c₁ h₁ hm)
+            (cpCom_correct_terminating c₂ h₂ (Cexec_sound c₁ h₁ hm))
+  | .ifthenelse b c₁ c₂, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">cases</span> hexec <span class="k">with</span>
+      | ifthenelse h =&gt;
+          <span class="k">refine</span> cexec_mkIfthenelse ?_
+          rw [cpBexp_sound hm b]
+          <span class="k">cases</span> hb : beval s₁ b
+          · rw [hb] <span class="k">at</span> h; simpa <span class="k">using</span> cpCom_correct_terminating c₂ (<span class="k">by</span> simpa <span class="k">using</span> h) hm
+          · rw [hb] <span class="k">at</span> h; simpa <span class="k">using</span> cpCom_correct_terminating c₁ (<span class="k">by</span> simpa <span class="k">using</span> h) hm
+  | .<span class="k">while</span> b c, s₁, s₂, S₁, hexec, hm =&gt; <span class="k">by</span>
+      <span class="k">have</span> hpost : Le (AStore.join S₁ (Cexec (Cexec S₁ (.<span class="k">while</span> b c)) c))
+          (Cexec S₁ (.<span class="k">while</span> b c)) := fixpoint_sound _ _
+      <span class="k">have</span> inner : ∀ {t₁ : Store} {c&#x27; : com} {t₂ : Store}, cexec t₁ c&#x27; t₂ →
+          c&#x27; = com.while b c → Matches t₁ (Cexec S₁ (.<span class="k">while</span> b c)) →
+          cexec t₁ (mkWhile (cpBexp (Cexec S₁ (.<span class="k">while</span> b c)) b)
+            (cpCom (Cexec S₁ (.<span class="k">while</span> b c)) c)) t₂ := <span class="k">by</span>
+        <span class="k">intro</span> t₁ c&#x27; t₂ h
+        <span class="k">induction</span> h <span class="k">with</span>
+        | skip =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | assign =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | seq _ _ _ _ =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | ifthenelse _ _ =&gt; <span class="k">intro</span> he; <span class="k">cases</span> he
+        | @while_done _b&#x27; c&#x27;&#x27; t hb =&gt;
+            <span class="k">intro</span> he hm&#x27;
+            <span class="k">cases</span> he
+            <span class="k">exact</span> cexec_mkWhile_done (<span class="k">by</span> rw [cpBexp_sound hm&#x27; b]; <span class="k">exact</span> hb)
+        | @while_loop b&#x27; c&#x27;&#x27; t₁ t&#x27; t₂ hb h₁ _ _ ih₂ =&gt;
+            <span class="k">intro</span> he hm&#x27;
+            <span class="k">cases</span> he
+            <span class="k">refine</span> cexec_mkWhile_loop (<span class="k">by</span> rw [cpBexp_sound hm&#x27; b]; <span class="k">exact</span> hb)
+              (cpCom_correct_terminating c h₁ hm&#x27;) (ih₂ <span class="k">rfl</span> ?_)
+            <span class="k">exact</span> Matches.mono hpost (Matches.mono (Le_join_right _ _)
+              (Cexec_sound c h₁ hm&#x27;))
+      <span class="k">exact</span> inner hexec <span class="k">rfl</span> (Matches.mono hpost (Matches.mono (Le_join_left _ _) hm))
+
+<span class="k">end</span> Constprop</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>CompilerVerification/Constprop.lean</code>.
+</div>
+</body>
+</html>

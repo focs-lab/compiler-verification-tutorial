@@ -1,0 +1,661 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Module IMP</title>
+<meta name="description" content="Documentation of Coq module IMP" />
+<link href="coq2html.css" rel="stylesheet" type="text/css" />
+<script type="text/javascript" src="coq2html.js"> </script>
+</head>
+
+<body onload="hideAll('proofscript')">
+<h1 class="title">Module IMP</h1>
+<div class="coq">
+<span class="id">From</span> <span class="id">Coq</span> <span class="kwd">Require</span> <span class="kwd">Import</span> <span class="id"><a href="http://coq.inria.fr/library/Coq.Arith.Arith.html">Arith</a></span> <span class="id"><a href="http://coq.inria.fr/library/Coq.ZArith.ZArith.html">ZArith</a></span> <span class="id"><a href="http://coq.inria.fr/library/Coq.micromega.Psatz.html">Psatz</a></span> <span class="id"><a href="http://coq.inria.fr/library/Coq.Bool.Bool.html">Bool</a></span> <span class="id"><a href="http://coq.inria.fr/library/Coq.Strings.String.html">String</a></span> <span class="id"><a href="http://coq.inria.fr/library/Coq.Lists.List.html">List</a></span> <span class="id"><a href="http://coq.inria.fr/library/Coq.Program.Equality.html">Program.Equality</a></span>.<br/>
+<span class="kwd">Require</span> <span class="kwd">Import</span> <span class="id"><a href="EUTypes2019.CompilerVerification.Sequences.html">Sequences</a></span>.<br/>
+<br/>
+<span class="kwd">Local</span> <span class="kwd">Open</span> <span class="kwd">Scope</span> <span class="id">string_scope</span>.<br/>
+<span class="kwd">Local</span> <span class="kwd">Open</span> <span class="kwd">Scope</span> <span class="id">Z_scope</span>.<br/>
+<span class="kwd">Local</span> <span class="kwd">Open</span> <span class="kwd">Scope</span> <span class="id">list_scope</span>.<br/>
+<br/>
+<h1> 1. The source language: IMP </h1>
+<br/>
+<h2> 1.1 Arithmetic expressions </h2>
+<br/>
+<span class="kwd">Definition</span> <span class="id"><a name="ident">ident</a></span> := <span class="id"><a href="http://coq.inria.fr/library/Coq.Strings.String.html#string">string</a></span>.<br/>
+<br/>
+<div class="doc">The abstract syntax: an arithmetic expression is either... </div>
+<br/>
+<span class="kwd">Inductive</span> <span class="id"><a name="aexp">aexp</a></span> : <span class="kwd">Type</span> :=<br/>
+&nbsp;&nbsp;| <span class="id"><a name="CONST">CONST</a></span> (<span class="id">n</span>: <span class="id"><a href="http://coq.inria.fr/library/Coq.Numbers.BinNums.html#Z">Z</a></span>)                       <span class="docright">(* a constant, or  *)</span><br/>
+&nbsp;&nbsp;| <span class="id"><a name="VAR">VAR</a></span> (<span class="id">x</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#ident">ident</a></span>)                    <span class="docright">(* a variable, or  *)</span><br/>
+&nbsp;&nbsp;| <span class="id"><a name="PLUS">PLUS</a></span> (<span class="id">a1</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">aexp</a></span>) (<span class="id">a2</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">aexp</a></span>)         <span class="docright">(* a sum of two expressions, or  *)</span><br/>
+&nbsp;&nbsp;| <span class="id"><a name="MINUS">MINUS</a></span> (<span class="id">a1</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">aexp</a></span>) (<span class="id">a2</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">aexp</a></span>).       <span class="docright">(* a difference of two expressions  *)</span><br/>
+<br/>
+<div class="doc">The denotational semantics: an evaluation function that computes
+  the integer value denoted by an expression.  It is parameterized by
+  a store <span class="bracket"><span class="id">s</span></span> that associates values to variables. </div>
+<br/>
+<span class="kwd">Definition</span> <span class="id"><a name="store">store</a></span> : <span class="kwd">Type</span> := <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#ident">ident</a></span> -&gt; <span class="id"><a href="http://coq.inria.fr/library/Coq.Numbers.BinNums.html#Z">Z</a></span>.<br/>
+<br/>
+<span class="kwd">Fixpoint</span> <span class="id"><a name="aeval">aeval</a></span> (<span class="id">s</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#store">store</a></span>) (<span class="id">a</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">aexp</a></span>) : <span class="id"><a href="http://coq.inria.fr/library/Coq.Numbers.BinNums.html#Z">Z</a></span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">match</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a">a</a></span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">CONST</a></span> <span class="id">n</span> =&gt; <span class="id">n</span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> <span class="id">x</span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">x</span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#PLUS">PLUS</a></span> <span class="id">a1</span> <span class="id">a2</span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">a1</span> + <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">a2</span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#MINUS">MINUS</a></span> <span class="id">a1</span> <span class="id">a2</span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">a1</span> - <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">a2</span><br/>
+&nbsp;&nbsp;<span class="kwd">end</span>.<br/>
+<br/>
+<div class="doc">Such evaluation functions / denotational semantics have many uses.
+    First, we can use <span class="bracket"><span class="id">aeval</span></span> to evaluate a given expression in a given store. </div>
+<br/>
+<span class="id">Compute</span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> (<span class="kwd">fun</span> <span class="id">x</span> =&gt; 2) (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#PLUS">PLUS</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> "<span class="id">x</span>") (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#MINUS">MINUS</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> "<span class="id">x</span>") (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">CONST</a></span> 1)))).<br/>
+<br/>
+<div class="doc">Result is: <span class="bracket"> = 3 : <span class="id">Z</span> </span>. </div>
+<br/>
+<div class="doc">We can also do partial evaluation with respect to an unknown store </div>
+<br/>
+<span class="kwd">Eval</span> <span class="id">cbn</span> <span class="kwd">in</span> (<span class="kwd">fun</span> <span class="id">s</span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#PLUS">PLUS</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> "<span class="id">x</span>") (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#MINUS">MINUS</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">CONST</a></span> 10) (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">CONST</a></span> 1)))).<br/>
+<br/>
+<div class="doc">Result is: <span class="bracket"> = <span class="kwd">fun</span> <span class="id">s</span> : <span class="id">store</span> =&gt; <span class="id">s</span> "<span class="id">x</span>" + 9 </span>. </div>
+<br/>
+<div class="doc">We can prove properties of a given expression. </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id"><a name="aeval_xplus1">aeval_xplus1</a></span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span> <span class="id">x</span>, <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#PLUS">PLUS</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span>) (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">CONST</a></span> 1)) &gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span>).<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof94')">Proof.</div>
+<div class="proofscript" id="proof94">
+&nbsp;&nbsp;<span class="tactic">intros</span>. <span class="id">cbn</span>. <span class="id">lia</span>.<br/>
+Qed.</div>
+<br/>
+<div class="doc">Finally, we can prove "meta-properties" that hold for all expressions.
+  For example: the value of an expression depends only on the values of its
+  free variables.
+  Free variables are defined by this recursive predicate:
+</div>
+<br/>
+<span class="kwd">Fixpoint</span> <span class="id"><a name="free_in_aexp">free_in_aexp</a></span> (<span class="id">x</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#ident">ident</a></span>) (<span class="id">a</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">aexp</a></span>) : <span class="kwd">Prop</span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">match</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a">a</a></span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">CONST</a></span> <span class="id">n</span> =&gt; <span class="id"><a href="http://coq.inria.fr/library/Coq.Init.Logic.html#False">False</a></span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">VAR</a></span> <span class="id">y</span> =&gt; <span class="id">y</span> = <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#PLUS">PLUS</a></span> <span class="id">a1</span> <span class="id">a2</span> | <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#MINUS">MINUS</a></span> <span class="id">a1</span> <span class="id">a2</span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#free_in_aexp">free_in_aexp</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span> <span class="id">a1</span> \/ <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#free_in_aexp">free_in_aexp</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span> <span class="id">a2</span><br/>
+&nbsp;&nbsp;<span class="kwd">end</span>.<br/>
+<br/>
+<span class="kwd">Theorem</span> <span class="id"><a name="aeval_free">aeval_free</a></span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s1</span> <span class="id">s2</span> <span class="id">a</span>,<br/>
+&nbsp;&nbsp;(<span class="kwd">forall</span> <span class="id">x</span>, <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#free_in_aexp">free_in_aexp</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a">a</a></span> -&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s1">s1</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span> = <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s2">s2</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#x">x</a></span>) -&gt;<br/>
+&nbsp;&nbsp;<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s1">s1</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a">a</a></span> = <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">aeval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s2">s2</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a">a</a></span>.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof95')">Proof.</div>
+<div class="proofscript" id="proof95">
+&nbsp;&nbsp;<span class="tactic">induction</span> <span class="id">a</span>; <span class="id">cbn</span>; <span class="tactic">intros</span> <span class="id">SAMEFREE</span>.<br/>
+- <span class="comment">(*&nbsp;Case&nbsp;a&nbsp;=&nbsp;CONST&nbsp;n&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;Case&nbsp;a&nbsp;=&nbsp;VAR&nbsp;x&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">SAMEFREE</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;Case&nbsp;a&nbsp;=&nbsp;PLUS&nbsp;a1&nbsp;a2&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">rewrite</span> <span class="id">IHa1</span>, <span class="id">IHa2</span>. <span class="tactic">auto</span>. <span class="tactic">auto</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;Case&nbsp;a&nbsp;=&nbsp;MINUS&nbsp;a1&nbsp;a2&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">rewrite</span> <span class="id">IHa1</span>, <span class="id">IHa2</span>; <span class="tactic">auto</span>.<br/>
+Qed.</div>
+<br/>
+<h3> Exercise (1 star, recommended). </h3>
+<div class="doc">Add support for multiplication in arithmetic expressions.
+  Modify the <span class="bracket"><span class="id">aexp</span></span> type and the <span class="bracket"><span class="id">aeval</span></span> function accordingly. </div>
+<br/>
+<h3> Exercise (2 stars, recommended). </h3>
+<div class="doc">Add support for division and for detecting arithmetic overflow.
+  With this extension, the evaluation of an expression can produce an
+  error: integer division by zero or result that exceeds the range
+  <span class="bracket">[<span class="id">min_int</span>, <span class="id">max_int</span>]</span>.  You can either change the type of the
+  function <span class="bracket"><span class="id">aeval</span></span> to
+<pre>
+  aeval: store -&gt; aexp -&gt; option Z</pre>
+  with <span class="bracket"><span class="id">None</span></span> meaning "error" and <span class="bracket"><span class="id">Some</span> <span class="id">n</span></span> meaning "success with
+  result n".  Alternatively, you can define the semantics as a
+  relation instead of a function:
+<pre>
+  Inductive aeval_rel: store -&gt; aexp -&gt; Z -&gt; Prop := ...</pre>
+  Some definitions you can use:
+</div>
+<br/>
+<span class="kwd">Definition</span> <span class="id">min_int</span> := - (2 ^ 63).<br/>
+<span class="kwd">Definition</span> <span class="id">max_int</span> := 2 ^ 63 - 1.<br/>
+<span class="kwd">Definition</span> <span class="id">check_for_overflow</span> (<span class="id">n</span>: <span class="id">Z</span>): <span class="id">option</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#n">Z</a></span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">if</span> <span class="id">n</span> &lt;? <span class="id">min_int</span> <span class="kwd">then</span> <span class="id"><a href="http://coq.inria.fr/library/Coq.Init.Datatypes.html#Some">None</a></span> <span class="kwd">else</span> <span class="kwd">if</span> <span class="id">n</span> &gt;? <span class="id">max_int</span> <span class="kwd">then</span> <span class="id">None</span> <span class="kwd">else</span> <span class="id">Some</span> <span class="id">n</span>.<br/>
+<br/>
+<h2> 1.3 Boolean expressions </h2>
+<br/>
+<div class="doc">The IMP language has conditional statements (if/then/else) and
+  loops.  They are controlled by expressions that evaluate to Boolean
+  values.  Here is the abstract syntax of Boolean expressions. </div>
+<br/>
+<span class="kwd">Inductive</span> <span class="id">bexp</span> : <span class="kwd">Type</span> :=<br/>
+&nbsp;&nbsp;| <span class="id">TRUE</span>                              <span class="docright">(* always true  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">FALSE</span>                             <span class="docright">(* always false  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">EQUAL</span> (<span class="id">a1</span>: <span class="id">aexp</span>) (<span class="id">a2</span>: <span class="id">aexp</span>)       <span class="docright">(* whether <span class="bracket"><span class="id">a1</span> = <span class="id">a2</span></span>  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">LESSEQUAL</span> (<span class="id">a1</span>: <span class="id">aexp</span>) (<span class="id">a2</span>: <span class="id">aexp</span>)   <span class="docright">(* whether <span class="bracket"><span class="id">a1</span> &lt;= <span class="id">a2</span></span>  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">NOT</span> (<span class="id">b1</span>: <span class="id">bexp</span>)                    <span class="docright">(* Boolean negation  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">AND</span> (<span class="id">b1</span>: <span class="id">bexp</span>) (<span class="id">b2</span>: <span class="id">bexp</span>).        <span class="docright">(* Boolean conjunction  *)</span><br/>
+<br/>
+<div class="doc">Just like arithmetic expressions evaluate to integers,
+  Boolean expressions evaluate to Boolean values <span class="bracket"><span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#store">true</a></span></span> or <span class="bracket"><span class="id">false</span></span>. </div>
+<br/>
+<span class="kwd">Fixpoint</span> <span class="id">beval</span> (<span class="id">s</span>: <span class="id">store</span>) (<span class="id">b</span>: <span class="id">bexp</span>) : <span class="id">bool</span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">b</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;| <span class="id">TRUE</span> =&gt; <span class="id">true</span><br/>
+&nbsp;&nbsp;| <span class="id">FALSE</span> =&gt; <span class="id">false</span><br/>
+&nbsp;&nbsp;| <span class="id">EQUAL</span> <span class="id">a1</span> <span class="id">a2</span> =&gt; <span class="id">aeval</span> <span class="id">s</span> <span class="id">a1</span> =? <span class="id">aeval</span> <span class="id">s</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">a2</a></span><br/>
+&nbsp;&nbsp;| <span class="id">LESSEQUAL</span> <span class="id">a1</span> <span class="id">a2</span> =&gt; <span class="id">aeval</span> <span class="id">s</span> <span class="id">a1</span> &lt;=? <span class="id">aeval</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#AND">s</a></span> <span class="id">a2</span><br/>
+&nbsp;&nbsp;| <span class="id">NOT</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#beval">b1</a></span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">negb</a></span> (<span class="id">beval</span> <span class="id">s</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">b1</a></span>)<br/>
+&nbsp;&nbsp;| <span class="id">AND</span> <span class="id">b1</span> <span class="id">b2</span> =&gt; <span class="id">beval</span> <span class="id">s</span> <span class="id">b1</span> &amp;&amp; <span class="id">beval</span> <span class="id">s</span> <span class="id">b2</span><br/>
+&nbsp;&nbsp;<span class="kwd">end</span>.<br/>
+<br/>
+<div class="doc">There are many useful derived forms. </div>
+<br/>
+<span class="kwd">Definition</span> <span class="id">NOTEQUAL</span> (<span class="id">a1</span> <span class="id">a2</span>: <span class="id">aexp</span>) : <span class="id">bexp</span> := <span class="id">NOT</span> (<span class="id">EQUAL</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aexp">a1</a></span> <span class="id">a2</span>).<br/>
+<br/>
+<span class="kwd">Definition</span> <span class="id">GREATEREQUAL</span> (<span class="id">a1</span> <span class="id">a2</span>: <span class="id">aexp</span>) : <span class="id">bexp</span> := <span class="id">LESSEQUAL</span> <span class="id">a2</span> <span class="id">a1</span>.<br/>
+<br/>
+<span class="kwd">Definition</span> <span class="id">GREATER</span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a2">a1</a></span> <span class="id">a2</span>: <span class="id">aexp</span>) : <span class="id">bexp</span> := <span class="id">NOT</span> (<span class="id">LESSEQUAL</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#bexp">a1</a></span> <span class="id">a2</span>).<br/>
+<br/>
+<span class="kwd">Definition</span> <span class="id">LESS</span> (<span class="id">a1</span> <span class="id">a2</span>: <span class="id">aexp</span>) : <span class="id">bexp</span> := <span class="id">GREATER</span> <span class="id">a2</span> <span class="id">a1</span>.<br/>
+<br/>
+<span class="kwd">Definition</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#b1">OR</a></span> (<span class="id">b1</span> <span class="id">b2</span>: <span class="id">bexp</span>) : <span class="id">bexp</span> := <span class="id">NOT</span> (<span class="id">AND</span> (<span class="id">NOT</span> <span class="id">b1</span>) (<span class="id">NOT</span> <span class="id">b2</span>)).<br/>
+<br/>
+<h3> Exercise (1 star, recommended) </h3>
+<div class="doc">Show the expected semantics for the <span class="bracket"><span class="id">OR</span></span> derived form: </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id">beval_OR</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span> <span class="id">b1</span> <span class="id">b2</span>, <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">beval</a></span> <span class="id">s</span> (<span class="id">OR</span> <span class="id">b1</span> <span class="id">b2</span>) = <span class="id">beval</span> <span class="id">s</span> <span class="id">b1</span> || <span class="id">beval</span> <span class="id">s</span> <span class="id">b2</span>.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof96')">Proof.</div>
+<div class="proofscript" id="proof96">
+&nbsp;&nbsp;<span class="tactic">intros</span>; <span class="id">cbn</span>.<br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;Hint:&nbsp;do&nbsp;"SearchAbout&nbsp;negb"&nbsp;to&nbsp;see&nbsp;the&nbsp;available&nbsp;lemmas&nbsp;about&nbsp;Boolean&nbsp;negation.&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;Hint:&nbsp;or&nbsp;just&nbsp;do&nbsp;a&nbsp;case&nbsp;analysis&nbsp;on&nbsp;[beval&nbsp;s&nbsp;b1]&nbsp;and&nbsp;[beval&nbsp;s&nbsp;b2],&nbsp;there&nbsp;are<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;only&nbsp;4&nbsp;cases&nbsp;to&nbsp;consider.&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+<br/>
+<h2> 1.4 Commands </h2>
+<br/>
+<div class="doc">To complete the definition of the IMP language, here is the
+  abstract syntax of commands, also known as statements. </div>
+<br/>
+<span class="kwd">Inductive</span> <span class="id">com</span>: <span class="kwd">Type</span> :=<br/>
+&nbsp;&nbsp;| <span class="id">SKIP</span>                                     <span class="docright">(* do nothing  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">ASSIGN</span> (<span class="id">x</span>: <span class="id">ident</span>) (<span class="id">a</span>: <span class="id">aexp</span>)              <span class="docright">(* assignment: <span class="bracket"><span class="id">v</span> := <span class="id">a</span></span>  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">SEQ</span> (<span class="id">c1</span>: <span class="id">com</span>) (<span class="id">c2</span>: <span class="id">com</span>)                  <span class="docright">(* sequence: <span class="bracket"><span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#com">c1</a></span>; <span class="id">c2</span></span>  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">IFTHENELSE</span> (<span class="id">b</span>: <span class="id">bexp</span>) (<span class="id">c1</span>: <span class="id">com</span>) (<span class="id">c2</span>: <span class="id">com</span>) <span class="docright">(* conditional: <span class="bracket"><span class="kwd">if</span> <span class="id">b</span> <span class="kwd">then</span> <span class="id">c1</span> <span class="kwd">else</span> <span class="id">c2</span></span>  *)</span><br/>
+&nbsp;&nbsp;| <span class="id">WHILE</span> (<span class="id">b</span>: <span class="id">bexp</span>) (<span class="id">c1</span>: <span class="id">com</span>).               <span class="docright">(* loop: <span class="bracket"><span class="id">while</span> <span class="id">b</span> <span class="tactic">do</span> <span class="id">c1</span> <span class="id">done</span></span>  *)</span><br/>
+<br/>
+<div class="doc">We can write <span class="bracket"><span class="id">c1</span> ;; <span class="id">c2</span></span> instead of <span class="bracket"><span class="id">SEQ</span> <span class="id">c1</span> <span class="id">c2</span></span>, it is easier on the eyes. </div>
+<br/>
+<span class="kwd">Infix</span> ";;" := <span class="id">SEQ</span> (<span class="tactic">at</span> <span class="id">level</span> 80, <span class="id">right</span> <span class="id">associativity</span>).<br/>
+<br/>
+<div class="doc">Here is an IMP program that performs Euclidean division by
+  repeated subtraction.  At the end of the program, "q" contains
+  the quotient of "a" by "b", and "r" contains the remainder.
+  In pseudocode:
+<pre>
+       r := a; q := 0;
+       while b &lt;= r do r := r - b; q := q + 1 done</pre>
+  In abstract syntax:
+</div>
+<br/>
+<span class="kwd">Definition</span> <span class="id">Euclidean_division</span> :=<br/>
+&nbsp;&nbsp;<span class="id">ASSIGN</span> "<span class="id">r</span>" (<span class="id">VAR</span> "<span class="id">a</span>") ;;<br/>
+&nbsp;&nbsp;<span class="id">ASSIGN</span> "<span class="id">q</span>" (<span class="id">CONST</span> 0) ;;<br/>
+&nbsp;&nbsp;<span class="id">WHILE</span> (<span class="id">LESSEQUAL</span> (<span class="id">VAR</span> "<span class="id">b</span>") (<span class="id">VAR</span> "<span class="id">r</span>"))<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;(<span class="id">ASSIGN</span> "<span class="id">r</span>" (<span class="id">MINUS</span> (<span class="id">VAR</span> "<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#VAR">r</a></span>") (<span class="id">VAR</span> "<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#CONST">b</a></span>")) ;;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">ASSIGN</span> "<span class="id">q</span>" (<span class="id">PLUS</span> (<span class="id">VAR</span> "<span class="id">q</span>") (<span class="id">CONST</span> 1))).<br/>
+<br/>
+<div class="doc">A useful operation over stores:
+    <span class="bracket"><span class="id">update</span> <span class="id">x</span> <span class="id">v</span> <span class="id">s</span></span> is the store that maps <span class="bracket"><span class="id">x</span></span> to <span class="bracket"><span class="id">v</span></span> and is equal to <span class="bracket"><span class="id">s</span></span> for
+    all variables other than <span class="bracket"><span class="id"><a href="http://coq.inria.fr/library/Coq.Numbers.BinNums.html#Z">x</a></span></span>. </div>
+<br/>
+<span class="kwd">Definition</span> <span class="id">update</span> (<span class="id">x</span>: <span class="id">ident</span>) (<span class="id">v</span>: <span class="id">Z</span>) (<span class="id">s</span>: <span class="id">store</span>) : <span class="id">store</span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">fun</span> <span class="id">y</span> =&gt; <span class="kwd">if</span> <span class="id">string_dec</span> <span class="id">x</span> <span class="id">y</span> <span class="kwd">then</span> <span class="id">v</span> <span class="kwd">else</span> <span class="id">s</span> <span class="id">y</span>.<br/>
+<br/>
+<div class="doc">A naive approach to giving semantics to commands is to write an
+  evaluation function <span class="bracket"><span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span></span> that runs the command <span class="bracket"><span class="id">c</span></span> in initial
+  store <span class="bracket"><span class="id">s</span></span> and returns the final store when <span class="bracket"><span class="id">c</span></span> terminates. </div>
+<br/>
+<span class="id">Fail</span> <span class="kwd">Fixpoint</span> <span class="id">cexec</span> (<span class="id">s</span>: <span class="id">store</span>) (<span class="id">c</span>: <span class="id">com</span>) : <span class="id">store</span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">c</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;| <span class="id">SKIP</span> =&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span><br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#SEQ">ASSIGN</a></span> <span class="id">x</span> <span class="id">a</span> =&gt; <span class="id">update</span> <span class="id">x</span> (<span class="id">aeval</span> <span class="id">s</span> <span class="id">a</span>) <span class="id">s</span><br/>
+&nbsp;&nbsp;| <span class="id">SEQ</span> <span class="id">c1</span> <span class="id">c2</span> =&gt; <span class="kwd">let</span> <span class="id">s</span>' := <span class="id">cexec</span> <span class="id">s</span> <span class="id">c1</span> <span class="kwd">in</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#beval">cexec</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span>' <span class="id">c2</span><br/>
+&nbsp;&nbsp;| <span class="id">IFTHENELSE</span> <span class="id">b</span> <span class="id">c1</span> <span class="id">c2</span> =&gt; <span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> <span class="kwd">then</span> <span class="id">cexec</span> <span class="id">s</span> <span class="id">c1</span> <span class="kwd">else</span> <span class="id">cexec</span> <span class="id">s</span> <span class="id">c2</span><br/>
+&nbsp;&nbsp;| <span class="id">WHILE</span> <span class="id">b</span> <span class="id">c1</span> =&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">then</span> (<span class="kwd">let</span> <span class="id">s</span>' := <span class="id">cexec</span> <span class="id">s</span> <span class="id">c1</span> <span class="kwd">in</span> <span class="id">cexec</span> <span class="id">s</span>' (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c1</span>))<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">else</span> <span class="id">s</span><br/>
+&nbsp;&nbsp;<span class="kwd">end</span>.<br/>
+<br/>
+<div class="doc">The definition above is rejected by Coq, and rightly so, because
+  all Coq functions must terminate, yet the <span class="bracket"><span class="id">WHILE</span></span> case may not
+  terminate.  Consider for example the infinite loop <span class="bracket"><span class="id">WHILE</span> <span class="id">TRUE</span>
+  <span class="id">SKIP</span></span>.
+  Worse, IMP is Turing-complete, since it has unbounded iteration
+  (<span class="bracket"><span class="id">WHILE</span></span>) plus arbitrary-precision integers.  Hence, there is no
+  computable function <span class="bracket"><span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span></span> that would return <span class="bracket"><span class="id">Some</span> <span class="id">s</span>'</span> if <span class="bracket"><span class="id">c</span></span>
+  terminates with store <span class="bracket"><span class="id">s</span>'</span>, and <span class="bracket"><span class="id">None</span></span> if <span class="bracket"><span class="id">c</span></span> does not terminate.
+  However, instead of computable functions, we can use a relation
+  <span class="bracket"><span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>'</span> that holds iff command <span class="bracket"><span class="id">c</span></span>, started in state <span class="bracket"><span class="id">s</span></span>,
+  terminates with state <span class="bracket"><span class="id">s</span>'</span>.  This relation can easily be defined as
+  a Coq inductive predicate:
+</div>
+<br/>
+<span class="kwd">Inductive</span> <span class="id">cexec</span>: <span class="id">store</span> -&gt; <span class="id">com</span> -&gt; <span class="id">store</span> -&gt; <span class="kwd">Prop</span> :=<br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">cexec_skip</a></span>: <span class="kwd">forall</span> <span class="id">s</span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> <span class="id">SKIP</span> <span class="id">s</span><br/>
+&nbsp;&nbsp;| <span class="id">cexec_assign</span>: <span class="kwd">forall</span> <span class="id">s</span> <span class="id">x</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#aeval">a</a></span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> (<span class="id"><a name="cexec_seq">ASSIGN</a></span> <span class="id">x</span> <span class="id">a</span>) (<span class="id">update</span> <span class="id">x</span> (<span class="id">aeval</span> <span class="id">s</span> <span class="id">a</span>) <span class="id">s</span>)<br/>
+&nbsp;&nbsp;| <span class="id">cexec_seq</span>: <span class="kwd">forall</span> <span class="id">c1</span> <span class="id">c2</span> <span class="id">s</span> <span class="id">s</span>' <span class="id">s</span>'',<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> <span class="id">c1</span> <span class="id">s</span>' -&gt; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c2">cexec</a></span> <span class="id">s</span>' <span class="id">c2</span> <span class="id"><a name="cexec_ifthenelse">s</a></span>'' -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> (<span class="id">SEQ</span> <span class="id">c1</span> <span class="id">c2</span>) <span class="id">s</span>''<br/>
+&nbsp;&nbsp;| <span class="id">cexec_ifthenelse</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c1</span> <span class="id">c2</span> <span class="id">s</span> <span class="id">s</span>',<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> (<span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> <span class="kwd">then</span> <span class="id">c1</span> <span class="kwd">else</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c2">c2</a></span>) <span class="id">s</span>' -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> (<span class="id">IFTHENELSE</span> <span class="id">b</span> <span class="id">c1</span> <span class="id">c2</span>) <span class="id">s</span>'<br/>
+&nbsp;&nbsp;| <span class="id">cexec_while_done</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c</span> <span class="id">s</span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">beval</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">b</span> = <span class="id"><a name="cexec_while_loop">false</a></span> -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>) <span class="id">s</span><br/>
+&nbsp;&nbsp;| <span class="id">cexec_while_loop</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c</span> <span class="id">s</span> <span class="id">s</span>' <span class="id">s</span>'',<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> = <span class="id">true</span> -&gt; <span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>' -&gt; <span class="id">cexec</span> <span class="id">s</span>' (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c">WHILE</a></span> <span class="id">b</span> <span class="id">c</span>) <span class="id">s</span>'' -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">cexec</span> <span class="id">s</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>) <span class="id">s</span>''.<br/>
+<br/>
+<div class="doc">This style of semantics is known as natural semantics or big-step
+  operational semantics.  The predicate <span class="bracket"><span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>'</span> holds iff there
+  exists a finite derivation of this conclusion, using the axioms and
+  inference rules above.  The structure of the derivation represents
+  the computations performed by <span class="bracket"><span class="id">c</span></span> in a tree-like manner.  The
+  finiteness of the derivation guarantees that only terminating
+  executions satisfy <span class="bracket"><span class="id">cexec</span></span>.  Indeed, <span class="bracket"><span class="id">WHILE</span> <span class="id">TRUE</span> <span class="id">SKIP</span></span> does not
+  satisfy <span class="bracket"><span class="id">cexec</span></span>: </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id">cexec_infinite_loop</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span>, ~ <span class="id">exists</span> <span class="id">s</span>', <span class="id">cexec</span> <span class="id">s</span> (<span class="id">WHILE</span> <span class="id">TRUE</span> <span class="id">SKIP</span>) <span class="id">s</span>'.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof97')">Proof.</div>
+<div class="proofscript" id="proof97">
+&nbsp;&nbsp;<span class="tactic">assert</span> (<span class="id">A</span>: <span class="kwd">forall</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>', <span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>' -&gt; <span class="id">c</span> = <span class="id">WHILE</span> <span class="id">TRUE</span> <span class="id">SKIP</span> -&gt; <span class="id">False</span>).<br/>
+&nbsp;&nbsp;{ <span class="tactic">induction</span> 1; <span class="tactic">intros</span> <span class="id">EQ</span>; <span class="tactic">inversion</span> <span class="id">EQ</span>.<br/>
+&nbsp;&nbsp;- <span class="tactic">subst</span> <span class="id">b</span> <span class="id">c</span>. <span class="id">cbn</span> <span class="kwd">in</span> <span class="id">H</span>. <span class="tactic">discriminate</span>.<br/>
+&nbsp;&nbsp;- <span class="tactic">subst</span> <span class="id">b</span> <span class="id">c</span>. <span class="tactic">apply</span> <span class="id">IHcexec2</span>. <span class="tactic">auto</span>.<br/>
+&nbsp;&nbsp;}<br/>
+&nbsp;&nbsp;<span class="tactic">intros</span> <span class="id">s</span> (<span class="id">s</span>' &amp; <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#TRUE">EXEC</a></span>). <span class="tactic">apply</span> <span class="id">A</span> <span class="kwd">with</span> (<span class="id">s</span> := <span class="id">s</span>) (<span class="id">c</span> := <span class="id">WHILE</span> <span class="id">TRUE</span> <span class="id">SKIP</span>) (<span class="id">s</span>' := <span class="id">s</span>'); <span class="tactic">auto</span>.<br/>
+Qed.</div>
+<br/>
+<div class="doc">Our naive idea of an execution function for commands was not
+  completely off.  We can define an approximation of such a function
+  by bounding a priori the recursion depth, using a <span class="bracket"><span class="id">fuel</span></span> parameter
+  of type <span class="bracket"><span class="id">nat</span></span>.  When the fuel drops to 0, <span class="bracket"><span class="id">None</span></span> is returned,
+  meaning that the final store could not be computed. </div>
+<br/>
+<span class="kwd">Fixpoint</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#com">cexec_bounded</a></span> (<span class="id">fuel</span>: <span class="id">nat</span>) (<span class="id">s</span>: <span class="id">store</span>) (<span class="id">c</span>: <span class="id">com</span>) : <span class="id">option</span> <span class="id">store</span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">fuel</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;| <span class="id">O</span> =&gt; <span class="id">None</span><br/>
+&nbsp;&nbsp;| <span class="id">S</span> <span class="id">fuel</span>' =&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">c</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">SKIP</span> =&gt; <span class="id">Some</span> <span class="id">s</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">ASSIGN</a></span> <span class="id">x</span> <span class="id">a</span> =&gt; <span class="id">Some</span> (<span class="id">update</span> <span class="id">x</span> (<span class="id">aeval</span> <span class="id">s</span> <span class="id">a</span>) <span class="id">s</span>)<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">SEQ</span> <span class="id">c1</span> <span class="id">c2</span> =&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">cexec_bounded</span> <span class="id">fuel</span>' <span class="id">s</span> <span class="id">c1</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">None</span>  =&gt; <span class="id">None</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">Some</span> <span class="id">s</span>' =&gt; <span class="id">cexec_bounded</span> <span class="id">fuel</span>' <span class="id">s</span>' <span class="id">c2</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">end</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">IFTHENELSE</a></span> <span class="id">b</span> <span class="id">c1</span> <span class="id">c2</span> =&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> <span class="kwd">then</span> <span class="id">cexec_bounded</span> <span class="id">fuel</span>' <span class="id">s</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#WHILE">c1</a></span> <span class="kwd">else</span> <span class="id">cexec_bounded</span> <span class="id">fuel</span>' <span class="id">s</span> <span class="id">c2</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">WHILE</span> <span class="id">b</span> <span class="id">c1</span> =&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> <span class="kwd">then</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">cexec_bounded</span> <span class="id">fuel</span>' <span class="id">s</span> <span class="id">c1</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">None</span>  =&gt; <span class="id">None</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| <span class="id">Some</span> <span class="id">s</span>' =&gt; <span class="id">cexec_bounded</span> <span class="id">fuel</span>' <span class="id">s</span>' (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c1</span>)<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">end</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">else</span> <span class="id">Some</span> <span class="id">s</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">end</span><br/>
+&nbsp;&nbsp;<span class="kwd">end</span>.<br/>
+<br/>
+<div class="doc">This bounded execution function is great for testing programs.
+    For example, let's compute the quotient and the remainder of 14 by
+    3 using the Euclidean division program above. </div>
+<br/>
+<span class="kwd">Eval</span> <span class="tactic">compute</span> <span class="kwd">in</span><br/>
+&nbsp;&nbsp;(<span class="kwd">let</span> <span class="id">s</span> := <span class="id">update</span> "<span class="id">a</span>" 14 (<span class="id">update</span> "<span class="id">b</span>" 3 (<span class="kwd">fun</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#Euclidean_division">_</a></span> =&gt; 0)) <span class="kwd">in</span><br/>
+&nbsp;&nbsp;&nbsp;<span class="kwd">match</span> <span class="id">cexec_bounded</span> 100 <span class="id">s</span> <span class="id">Euclidean_division</span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;&nbsp;| <span class="id">None</span> =&gt; <span class="id">None</span><br/>
+&nbsp;&nbsp;&nbsp;| <span class="id">Some</span> <span class="id">s</span>' =&gt; <span class="id">Some</span> (<span class="id">s</span>' "<span class="id">q</span>", <span class="id">s</span>' "<span class="id">r</span>")<br/>
+&nbsp;&nbsp;&nbsp;<span class="kwd">end</span>).<br/>
+<br/>
+<h3> Exercise (3 stars, optional) </h3>
+<div class="doc">Relate the <span class="bracket"><span class="id">cexec</span></span> relation with the <span class="bracket"><span class="id">cexec_bounded</span></span> function by
+  proving the following two lemmas. </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id">cexec_bounded_sound</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">fuel</span> <span class="id">s</span> <span class="id">c</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#cexec">s</a></span>', <span class="id">cexec_bounded</span> <span class="id">fuel</span> <span class="id">s</span> <span class="id">c</span> = <span class="id">Some</span> <span class="id">s</span>' -&gt; <span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>'.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof98')">Proof.</div>
+<div class="proofscript" id="proof98">
+&nbsp;&nbsp;<span class="tactic">induction</span> <span class="id">fuel</span> <span class="kwd">as</span> [ | <span class="id">fuel</span> ]; <span class="id">cbn</span>; <span class="tactic">intros</span>.<br/>
+- <span class="tactic">discriminate</span>.<br/>
+- <span class="tactic">destruct</span> <span class="id">c</span>.<br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id">cexec_bounded_complete</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>', <span class="id">cexec</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#fuel">s</a></span> <span class="id">c</span> <span class="id">s</span>' -&gt;<br/>
+&nbsp;&nbsp;<span class="id">exists</span> <span class="id">fuel1</span>, <span class="kwd">forall</span> <span class="id">fuel</span>, (<span class="id">fuel</span> &gt;= <span class="id">fuel1</span>)%<span class="id">nat</span> -&gt; <span class="id">cexec_bounded</span> <span class="id">fuel</span> <span class="id">s</span> <span class="id">c</span> = <span class="id">Some</span> <span class="id">s</span>'.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof99')">Proof.</div>
+<div class="proofscript" id="proof99">
+&nbsp;&nbsp;<span class="tactic">induction</span> 1.<br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+<br/>
+<h1> 6. Small-step semantics for IMP </h1>
+<br/>
+<h1> 6.1 Reduction semantics </h1>
+<br/>
+<div class="doc">In small-step style, the semantics is presented as a one-step
+  reduction relation <span class="bracket"> <span class="tactic">red</span> (<span class="id">c</span>, <span class="id">s</span>) (<span class="id">c</span>', <span class="id">s</span>') </span>, meaning that the command
+  <span class="bracket"><span class="id">c</span></span>, executed in initial state <span class="bracket"><span class="id">s</span></span>, performs one elementary step of
+  computation.  <span class="bracket"><span class="id">s</span>'</span> is the updated state after this step.  <span class="bracket"><span class="id">c</span>'</span> is
+  the residual command, capturing all the computations that remain to
+  be done.  </div>
+<br/>
+<span class="kwd">Inductive</span> <span class="tactic">red</span>: <span class="id">com</span> * <span class="id">store</span> -&gt; <span class="id">com</span> * <span class="id">store</span> -&gt; <span class="kwd">Prop</span> :=<br/>
+&nbsp;&nbsp;| <span class="id">red_assign</span>: <span class="kwd">forall</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#update">x</a></span> <span class="id">a</span> <span class="id">s</span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#a">ASSIGN</a></span> <span class="id">x</span> <span class="id">a</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">update</span> <span class="id">x</span> (<span class="id">aeval</span> <span class="id">s</span> <span class="id">a</span>) <span class="id">s</span>)<br/>
+&nbsp;&nbsp;| <span class="id">red_seq_done</span>: <span class="kwd">forall</span> <span class="id">c</span> <span class="id"><a name="red_seq_step">s</a></span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id">SEQ</span> <span class="id">SKIP</span> <span class="id">c</span>, <span class="id">s</span>) (<span class="id">c</span>, <span class="id">s</span>)<br/>
+&nbsp;&nbsp;| <span class="id">red_seq_step</span>: <span class="kwd">forall</span> <span class="id">c1</span> <span class="id">c</span> <span class="id">s1</span> <span class="id">c2</span> <span class="id">s2</span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id">c1</span>, <span class="id">s1</span>) (<span class="id">c2</span>, <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c">s2</a></span>) -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id">SEQ</span> <span class="id">c1</span> <span class="id">c</span>, <span class="id">s1</span>) (<span class="id">SEQ</span> <span class="id">c2</span> <span class="id">c</span>, <span class="id">s2</span>)<br/>
+&nbsp;&nbsp;| <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#red">red_ifthenelse</a></span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">c1</a></span> <span class="id">c2</span> <span class="id">s</span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id">IFTHENELSE</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c2">b</a></span> <span class="id">c1</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">c2</a></span>, <span class="id">s</span>) ((<span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> <span class="kwd">then</span> <span class="id">c1</span> <span class="kwd">else</span> <span class="id">c2</span>), <span class="id">s</span>)<br/>
+&nbsp;&nbsp;| <span class="id">red_while_done</span>: <span class="kwd">forall</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#red">b</a></span> <span class="id">c</span> <span class="id">s</span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c">beval</a></span> <span class="id">s</span> <span class="id">b</span> = <span class="id">false</span> -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">s</span>)<br/>
+&nbsp;&nbsp;| <span class="id">red_while_loop</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#WHILE">s</a></span>,<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">beval</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#SEQ">s</a></span> <span class="id">b</span> = <span class="id">true</span> -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tactic">red</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>, <span class="id">s</span>) (<span class="id">SEQ</span> <span class="id">c</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>), <span class="id">s</span>).<br/>
+<br/>
+<h3> Exercise (2 stars, recommended) </h3>
+<div class="doc">Show that Imp programs cannot go wrong.  Hint: first prove the following
+  "progress" result for non-<span class="bracket"><span class="id">SKIP</span></span> commands. </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id">red_progress</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">c</span> <span class="id">s</span>, <span class="id">c</span> = <span class="id">SKIP</span> \/ <span class="id">exists</span> <span class="id">c</span>', <span class="id">exists</span> <span class="id">s</span>', <span class="tactic">red</span> (<span class="id">c</span>, <span class="id">s</span>) (<span class="id">c</span>', <span class="id">s</span>').<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof100')">Proof.</div>
+<div class="proofscript" id="proof100">
+&nbsp;&nbsp;<span class="tactic">induction</span> <span class="id">c</span>; <span class="tactic">intros</span>.<br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+<br/>
+<span class="kwd">Definition</span> <span class="id">goes_wrong</span> (<span class="id">c</span>: <span class="id">com</span>) (<span class="id">s</span>: <span class="id">store</span>) : <span class="kwd">Prop</span> :=<br/>
+&nbsp;&nbsp;<span class="id">exists</span> <span class="id">c</span>', <span class="id">exists</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#red">s</a></span>',<br/>
+&nbsp;&nbsp;<span class="id">star</span> <span class="tactic">red</span> (<span class="id">c</span>, <span class="id">s</span>) (<span class="id">c</span>', <span class="id">s</span>') /\ <span class="id">irred</span> <span class="tactic">red</span> (<span class="id">c</span>', <span class="id">s</span>') /\ <span class="id">c</span>' &lt;&gt; <span class="id">SKIP</span>.<br/>
+<br/>
+<span class="kwd">Lemma</span> <span class="id">not_goes_wrong</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">c</span> <span class="id">s</span>, ~(<span class="id">goes_wrong</span> <span class="id">c</span> <span class="id">s</span>).<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof101')">Proof.</div>
+<div class="proofscript" id="proof101">
+&nbsp;&nbsp;<span class="tactic">intros</span> <span class="id">c</span> <span class="id">s</span> (<span class="id">c</span>' &amp; <span class="id">s</span>' &amp; <span class="id">STAR</span> &amp; <span class="id">IRRED</span> &amp; <span class="id">NOTSKIP</span>).<br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+<br/>
+<div class="doc">Sequences of reductions can go under a sequence context, generalizing
+  rule <span class="bracket"><span class="id">red_seq_step</span></span>. </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id"><a href="EUTypes2019.CompilerVerification.Sequences.html#star">red_seq_steps</a></span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">c2</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>' <span class="id">c</span>',<br/>
+&nbsp;&nbsp;<span class="id">star</span> <span class="tactic">red</span> (<span class="id">c</span>, <span class="id">s</span>) (<span class="id">c</span>', <span class="id">s</span>') -&gt; <span class="id">star</span> <span class="tactic">red</span> ((<span class="id">c</span>;;<span class="id">c2</span>), <span class="id">s</span>) ((<span class="id">c</span>';;<span class="id">c2</span>), <span class="id">s</span>').<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof102')">Proof.</div>
+<div class="proofscript" id="proof102">
+&nbsp;&nbsp;<span class="tactic">intros</span>. <span class="tactic">dependent</span> <span class="tactic">induction</span> <span class="id">H</span>.<br/>
+- <span class="tactic">apply</span> <span class="id">star_refl</span>.<br/>
+- <span class="tactic">destruct</span> <span class="id">b</span> <span class="kwd">as</span> [<span class="id">c1</span> <span class="id">st1</span>].<br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">star_step</span> <span class="kwd">with</span> (<span class="id">c1</span>;;<span class="id">c2</span>, <span class="id">st1</span>). <span class="tactic">apply</span> <span class="id">red_seq_step</span>. <span class="tactic">auto</span>. <span class="tactic">auto</span>.  <br/>
+Qed.</div>
+<br/>
+<div class="doc">We now recall the equivalence result between 
+<ul>
+<li>
+ termination according to the big-step semantics
+</li>
+<li>
+ existence of a finite sequence of reductions to <span class="bracket"><span class="id">SKIP</span></span>
+  according to the small-step semantics.
+</li>
+</ul>
+We start with the implication big-step ==&gt; small-step, which is
+a straightforward induction on the big-step evaluation derivation. </div>
+<br/>
+<span class="kwd">Theorem</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c">cexec_to_reds</a></span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>', <span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>' -&gt; <span class="id">star</span> <span class="tactic">red</span> (<span class="id">c</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">s</span>').<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof103')">Proof.</div>
+<div class="proofscript" id="proof103">
+&nbsp;&nbsp;<span class="tactic">induction</span> 1.<br/>
+- <span class="comment">(*&nbsp;SKIP&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">star_refl</span>.<br/>
+- <span class="comment">(*&nbsp;ASSIGN&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">star_one</span>. <span class="tactic">apply</span> <span class="id">red_assign</span>. <br/>
+- <span class="comment">(*&nbsp;SEQ&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">star_trans</span>. <span class="tactic">apply</span> <span class="id"><a href="EUTypes2019.CompilerVerification.Sequences.html#star_step">red_seq_steps</a></span>. <span class="tactic">apply</span> <span class="id">IHcexec1</span>.<br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">star_step</span>.  <span class="tactic">apply</span> <span class="id">red_seq_done</span>.  <span class="tactic">apply</span> <span class="id">IHcexec2</span>.<br/>
+- <span class="comment">(*&nbsp;IFTHENELSE&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">star_step</span>. <span class="tactic">apply</span> <span class="id">red_ifthenelse</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;WHILE&nbsp;stop&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">star_one</span>. <span class="tactic">apply</span> <span class="id">red_while_done</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;WHILE&nbsp;loop&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">star_step</span>. <span class="tactic">apply</span> <span class="id">red_while_loop</span>. <span class="tactic">auto</span>.<br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">star_trans</span>. <span class="tactic">apply</span> <span class="id"><a href="EUTypes2019.CompilerVerification.Sequences.html#star_step">red_seq_steps</a></span>. <span class="tactic">apply</span> <span class="id">IHcexec1</span>.<br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">star_step</span>. <span class="tactic">apply</span> <span class="id">red_seq_done</span>. <span class="tactic">apply</span> <span class="id">IHcexec2</span>.<br/>
+Qed.</div>
+<br/>
+<div class="doc">The reverse implication, from small-step to big-step, is more subtle.
+The key lemma is the following, showing that one step of reduction
+followed by a big-step evaluation to a final state can be collapsed
+into a single big-step evaluation to that final state. </div>
+<br/>
+<span class="kwd">Lemma</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#red">red_append_cexec</a></span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">c1</span> <span class="id">s1</span> <span class="id">c2</span> <span class="id">s2</span>, <span class="tactic">red</span> (<span class="id">c1</span>, <span class="id">s1</span>) (<span class="id">c2</span>, <span class="id">s2</span>) -&gt;<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span>', <span class="id">cexec</span> <span class="id">s2</span> <span class="id">c2</span> <span class="id">s</span>' -&gt; <span class="id">cexec</span> <span class="id">s1</span> <span class="id">c1</span> <span class="id">s</span>'.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof104')">Proof.</div>
+<div class="proofscript" id="proof104">
+&nbsp;&nbsp;<span class="tactic">intros</span> <span class="id">until</span> <span class="id">s2</span>; <span class="tactic">intros</span> <span class="id">STEP</span>. <span class="tactic">dependent</span> <span class="tactic">induction</span> <span class="id">STEP</span>; <span class="tactic">intros</span>.<br/>
+- <span class="comment">(*&nbsp;red_assign&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">inversion</span> <span class="id">H</span>; <span class="tactic">subst</span>. <span class="tactic">apply</span> <span class="id">cexec_assign</span>. <br/>
+- <span class="comment">(*&nbsp;red_seq_done&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">cexec_seq</span> <span class="kwd">with</span> <span class="id">s2</span>. <span class="tactic">apply</span> <span class="id">cexec_skip</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;red&nbsp;seq&nbsp;step&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">inversion</span> <span class="id">H</span>; <span class="tactic">subst</span>. <span class="tactic">apply</span> <span class="id">cexec_seq</span> <span class="kwd">with</span> <span class="id">s</span>'0.<br/>
+&nbsp;&nbsp;<span class="tactic">eapply</span> <span class="id">IHSTEP</span>; <span class="tactic">eauto</span>.<br/>
+&nbsp;&nbsp;<span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;red_ifthenelse&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">apply</span> <span class="id">cexec_ifthenelse</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;red_while_done&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">inversion</span> <span class="id">H0</span>; <span class="tactic">subst</span>. <span class="tactic">apply</span> <span class="id">cexec_while_done</span>. <span class="tactic">auto</span>.<br/>
+- <span class="comment">(*&nbsp;red&nbsp;while&nbsp;loop&nbsp;*)</span><br/>
+&nbsp;&nbsp;<span class="tactic">inversion</span> <span class="id">H0</span>; <span class="tactic">subst</span>. <span class="tactic">apply</span> <span class="id">cexec_while_loop</span> <span class="kwd">with</span> <span class="id">s</span>'0; <span class="tactic">auto</span>.<br/>
+Qed.</div>
+<br/>
+<div class="doc">As a consequence, a term that reduces to <span class="bracket"><span class="id">SKIP</span></span> evaluates in big-step
+  with the same final state. </div>
+<br/>
+<span class="kwd">Theorem</span> <span class="id">reds_to_cexec</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#cexec">s</a></span> <span class="id">c</span> <span class="id">s</span>',<br/>
+&nbsp;&nbsp;<span class="id">star</span> <span class="tactic">red</span> (<span class="id">c</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">s</span>') -&gt; <span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>'.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof105')">Proof.</div>
+<div class="proofscript" id="proof105">
+&nbsp;&nbsp;<span class="tactic">intros</span>. <span class="tactic">dependent</span> <span class="tactic">induction</span> <span class="id">H</span>.<br/>
+- <span class="tactic">apply</span> <span class="id">cexec_skip</span>.<br/>
+- <span class="tactic">destruct</span> <span class="id">b</span> <span class="kwd">as</span> [<span class="id">c1</span> <span class="id">s1</span>]. <span class="tactic">apply</span> <span class="id">red_append_cexec</span> <span class="kwd">with</span> <span class="id">c1</span> <span class="id">s1</span>; <span class="tactic">auto</span>.<br/>
+Qed.</div>
+<br/>
+<h2> 6.2 Transition semantics with continuations </h2>
+<br/>
+<div class="doc">We now introduce an alternate form of small-step semantics
+  where the command to be executed is explicitly decomposed into:
+<ul>
+<li>
+ a sub-command under focus, where computation takes place;
+</li>
+<li>
+ a continuation (or context) describing the position of this sub-command
+  in the whole command, or, equivalently, describing the parts of the
+  whole command that remain to be reduced once the sub-command is done.
+</li>
+</ul>
+As a consequence, the small-step semantics is presented as a
+transition relation between triples (subcommand-under-focus,
+continuation, state).  Previously, we had transitions between pairs
+(whole-command, state).
+The syntax of continuations is as follows:
+</div>
+<br/>
+<span class="kwd">Inductive</span> <span class="id">cont</span> : <span class="kwd">Type</span> :=<br/>
+&nbsp;&nbsp;| <span class="id">Kstop</span><br/>
+&nbsp;&nbsp;| <span class="id">Kseq</span> (<span class="id">c</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#com">com</a></span>) (<span class="id">k</span>: <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#cont">cont</a></span>)<br/>
+&nbsp;&nbsp;| <span class="id">Kwhile</span> (<span class="id">b</span>: <span class="id">bexp</span>) (<span class="id">c</span>: <span class="id">com</span>) (<span class="id">k</span>: <span class="id">cont</span>).<br/>
+<br/>
+<div class="doc">Intuitive meaning of these constructors:
+<ul>
+<li>
+ <span class="bracket"><span class="id">Kstop</span></span> means that, after the sub-command under focus terminates,
+  nothing remains to be done, and execution can stop.  In other words,
+  the sub-command under focus is the whole command.
+</li>
+<li>
+ <span class="bracket"><span class="id">Kseq</span> <span class="id">c</span> <span class="id">k</span></span> means that, after the sub-command terminates, we still need
+  to execute command <span class="bracket"><span class="id">c</span></span> in sequence, then continue as described by <span class="bracket"><span class="id">k</span></span>.
+</li>
+<li>
+ <span class="bracket"><span class="id">Kwhile</span> <span class="id">b</span> <span class="id">c</span> <span class="id">k</span></span> means that, after the sub-command terminates, we still need
+  to execute a loop <span class="bracket"><span class="id">WHILE</span> <span class="id">b</span> <span class="id">DO</span> <span class="id">c</span> <span class="id">END</span></span>, then continue as described by <span class="bracket"><span class="id">k</span></span>.
+</li>
+</ul>
+</div>
+<br/>
+<div class="doc">Another way to forge intuitions about continuations is to ponder the following
+  <span class="bracket"><span class="id">apply_cont</span> <span class="id">k</span> <span class="id">c</span></span> function, which takes a sub-command <span class="bracket"><span class="id">c</span></span> under focus
+  and a continuation <span class="bracket"><span class="id">k</span></span>, and rebuilds the whole command.  It simply
+  puts <span class="bracket"><span class="id">c</span></span> in lefmost position in a nest of sequences as described by <span class="bracket"><span class="id">k</span></span>.
+</div>
+<br/>
+<span class="kwd">Fixpoint</span> <span class="id">apply_cont</span> (<span class="id">k</span>: <span class="id">cont</span>) (<span class="id">c</span>: <span class="id">com</span>) : <span class="id">com</span> :=<br/>
+&nbsp;&nbsp;<span class="kwd">match</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#apply_cont">k</a></span> <span class="kwd">with</span><br/>
+&nbsp;&nbsp;| <span class="id">Kstop</span> =&gt; <span class="id">c</span><br/>
+&nbsp;&nbsp;| <span class="id">Kseq</span> <span class="id">c1</span> <span class="id">k1</span> =&gt; <span class="id">apply_cont</span> <span class="id">k1</span> (<span class="id">SEQ</span> <span class="id">c</span> <span class="id">c1</span>)<br/>
+&nbsp;&nbsp;| <span class="id">Kwhile</span> <span class="id">b1</span> <span class="id">c1</span> <span class="id">k1</span> =&gt; <span class="id">apply_cont</span> <span class="id">k1</span> (<span class="id">SEQ</span> <span class="id">c</span> (<span class="id">WHILE</span> <span class="id">b1</span> <span class="id">c1</span>))<br/>
+&nbsp;&nbsp;<span class="kwd">end</span>.<br/>
+<br/>
+<div class="doc">Transitions between (subcommand-under-focus, continuation, state)
+  triples perform conceptually different kinds of actions:
+<ul>
+<li>
+ Computation: evaluate an arithmetic expression or boolean expression
+  and modify the triple according to the result of the evaluation.
+</li>
+<li>
+ Focusing: replace the sub-command by a sub-sub-command that is to be
+  evaluated next, possibly enriching the continuation as a consequence.
+</li>
+<li>
+ Resumption: when the sub-command is <span class="bracket"><span class="id">SKIP</span></span> and therefore fully executed,
+  look at the head of the continuation to see what to do next.
+</li>
+</ul>
+Here are the transition rules, classified by the kinds of actions they implement.
+</div>
+<br/>
+<span class="kwd">Inductive</span> <span class="id">step</span>: <span class="id">com</span> * <span class="id">cont</span> * <span class="id">store</span> -&gt; <span class="id">com</span> * <span class="id">cont</span> * <span class="id">store</span> -&gt; <span class="kwd">Prop</span> :=<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_assign</span>: <span class="kwd">forall</span> <span class="id">x</span> <span class="id">a</span> <span class="id">k</span> <span class="id">s</span>,              <span class="docright">(* computation for assignments  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">step</span> (<span class="id">ASSIGN</span> <span class="id">x</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">a</a></span>, <span class="id">k</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">k</span>, <span class="id">update</span> <span class="id">x</span> (<span class="id">aeval</span> <span class="id">s</span> <span class="id">a</span>) <span class="id">s</span>)<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_seq</span>: <span class="kwd">forall</span> <span class="id">c1</span> <span class="id">c2</span> <span class="id">s</span> <span class="id">k</span>,               <span class="docright">(* focusing for sequence  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">step</span> (<span class="id">SEQ</span> <span class="id">c1</span> <span class="id">c2</span>, <span class="id">k</span>, <span class="id">s</span>) (<span class="id">c1</span>, <span class="id">Kseq</span> <span class="id">c2</span> <span class="id">k</span>, <span class="id">s</span>)<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_ifthenelse</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c1</span> <span class="id">c2</span> <span class="id">k</span> <span class="id">s</span>,      <span class="docright">(* computation for conditionals  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">step</span> (<span class="id">IFTHENELSE</span> <span class="id">b</span> <span class="id">c1</span> <span class="id">c2</span>, <span class="id">k</span>, <span class="id">s</span>) ((<span class="kwd">if</span> <span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> <span class="kwd">then</span> <span class="id">c1</span> <span class="kwd">else</span> <span class="id">c2</span>), <span class="id">k</span>, <span class="id">s</span>)<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_while_done</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c</span> <span class="id">k</span> <span class="id">s</span>,          <span class="docright">(* computation for loops  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">beval</span> <span class="id">s</span> <span class="id">b</span> = <span class="id">false</span> -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">step</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>, <span class="id">k</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">k</span>, <span class="id">s</span>)<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_while_true</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c</span> <span class="id">k</span> <span class="id">s</span>,          <span class="docright">(* computation and focusSKIing for loops  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#c">beval</a></span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#s">s</a></span> <span class="id">b</span> = <span class="id">true</span> -&gt;<br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">step</span> (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>, <span class="id">k</span>, <span class="id">s</span>) (<span class="id">c</span>, <span class="id">Kwhile</span> <span class="id">b</span> <span class="id">c</span> <span class="id">k</span>, <span class="id">s</span>)<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_skip_seq</span>: <span class="kwd">forall</span> <span class="id">c</span> <span class="id">k</span> <span class="id">s</span>,              <span class="docright">(* resumption  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id"><a name="step_skip_while">step</a></span> (<span class="id">SKIP</span>, <span class="id">Kseq</span> <span class="id">c</span> <span class="id">k</span>, <span class="id">s</span>) (<span class="id">c</span>, <span class="id">k</span>, <span class="id">s</span>)<br/>
+<br/>
+&nbsp;&nbsp;| <span class="id">step_skip_while</span>: <span class="kwd">forall</span> <span class="id">b</span> <span class="id">c</span> <span class="id">k</span> <span class="id">s</span>,          <span class="docright">(* resumption  *)</span><br/>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="id">step</span> (<span class="id">SKIP</span>, <span class="id">Kwhile</span> <span class="id">b</span> <span class="id">c</span> <span class="id">k</span>, <span class="id">s</span>) (<span class="id">WHILE</span> <span class="id">b</span> <span class="id">c</span>, <span class="id">k</span>, <span class="id">s</span>).<br/>
+<br/>
+<br/>
+<h3> Extensions to other control structures </h3>
+<br/>
+<div class="doc">A remarkable feature of continuation semantics is that they extend very easily
+  to other control structures besides "if-then-else" and "while" loops.
+  Consider for instance the "break" construct of C, C++ and Java, which
+  immediately terminates the nearest enclosing "while" loop.  Assume we
+  extend the type of commands with a <span class="bracket"><span class="id">BREAK</span></span> constructor.  Then, all we need
+  to give "break" a semantics is to add two resumption rules:
+<pre>
+  | step_break_seq: forall c k s,
+      step (BREAK, Kseq c k, s) (BREAK, k, s)
+  | step_break_while: forall b c k s,
+      step (BREAK, Kwhile b c k, s) (SKIP, k, s)</pre>
+  The first rule says that a <span class="bracket"><span class="id">BREAK</span></span> statement "floats up" pending sequences,
+  skipping over the computations they contain.  Eventually, a <span class="bracket"><span class="id">Kwhile</span></span>
+  continuation is encountered, meaning that the <span class="bracket"><span class="id">BREAK</span></span> found its enclosing
+  loop.  Then, the second rule discards the <span class="bracket"><span class="id">Kwhile</span></span> continuation and
+  turns the <span class="bracket"><span class="id">BREAK</span></span> into a <span class="bracket"><span class="id">SKIP</span></span>, effectively terminating the loop.
+  That's all there is to it!
+*</div>
+<br/>
+<h3> Exercise (2 stars, recommended) </h3>
+<div class="doc">Besides "break", C, C++ and Java also have a "continue" statement
+  that terminates the current iteration of the enclosing loop,
+  then resumes the loop at its next iteration (instead of stopping
+  the loop like "break" does). Give the transition rules
+  for the "continue" statement. </div>
+<br/>
+<h3> Exercise (3 stars, optional) </h3>
+<div class="doc">In Java, loops as well as "break" and "continue" statements carry
+  an optional label.  "break" without a label exits out of the immediately
+  enclosing loop, but "break lbl" exits out of the first enclosing loop
+  that carries the label "lbl".  Similarly for "continue".
+  Give the transition rules for "break lbl" and "continue lbl". </div>
+<br/>
+<h3> Relating the continuation semantics and the big-step semantics </h3>
+<br/>
+<h3> Exercise (2 stars, optional) </h3>
+<div class="doc">Show that a big-step execution give rise to a sequence of steps to <span class="bracket"><span class="id">SKIP</span></span>.
+  You can adapt the proof of theorem <span class="bracket"><span class="id">cexec_to_reds</span></span> with minor changes. </div>
+<br/>
+<span class="kwd">Theorem</span> <span class="id">cexec_to_steps</span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>', <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#k">cexec</a></span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>' -&gt; <span class="kwd">forall</span> <span class="id">k</span>, <span class="id">star</span> <span class="id">step</span> (<span class="id">c</span>, <span class="id">k</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">k</span>, <span class="id">s</span>').<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof106')">Proof.</div>
+<div class="proofscript" id="proof106">
+&nbsp;&nbsp;<span class="tactic">induction</span> 1; <span class="tactic">intros</span> <span class="id">k</span>.<br/>
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+<br/>
+<h3> Exercise (3 stars, optional) </h3>
+<div class="doc">Show the converse result: a sequence of steps to <span class="bracket">(<span class="id">SKIP</span>, <span class="id">Kstop</span>)</span> corresponds
+  to a big-step execution.  You need a lemma similar to <span class="bracket"><span class="id">red_append_cexec</span></span>,
+  but also a notion of big-step execution of a continuation. </div>
+<br/>
+<span class="kwd">Theorem</span> <span class="id"><a href="EUTypes2019.CompilerVerification.IMP.html#step">steps_to_cexec</a></span>:<br/>
+&nbsp;&nbsp;<span class="kwd">forall</span> <span class="id">c</span> <span class="id">s</span> <span class="id">s</span>', <span class="id">star</span> <span class="id">step</span> (<span class="id">c</span>, <span class="id">Kstop</span>, <span class="id">s</span>) (<span class="id">SKIP</span>, <span class="id">Kstop</span>, <span class="id">s</span>') -&gt; <span class="id">cexec</span> <span class="id">s</span> <span class="id">c</span> <span class="id">s</span>'.<br/>
+<div class="toggleproof" onclick="toggleDisplay('proof107')">Proof.</div>
+<div class="proofscript" id="proof107">
+&nbsp;&nbsp;<span class="comment">(*&nbsp;FILL&nbsp;IN&nbsp;HERE&nbsp;*)</span><br/>
+Abort.</div>
+
+</div>
+<div class="footer"><hr/>Generated by <a href="https://github.com/xavierleroy/coq2html/">coq2html</div>
+</body>
+</html>

@@ -1,0 +1,9 @@
+name = "compilerverif"
+version = "0.1.0"
+defaultTargets = ["CompilerVerification", "Exercises"]
+
+[[lean_lib]]
+name = "CompilerVerification"
+
+[[lean_lib]]
+name = "Exercises"

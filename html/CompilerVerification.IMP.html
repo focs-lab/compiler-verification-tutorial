@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CompilerVerification.IMP</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.Sequences.html">&larr; CompilerVerification.Sequences</a> &nbsp; <a href="CompilerVerification.Compil.html">CompilerVerification.Compil &rarr;</a></span>
+</div>
+<h1 class="modname">CompilerVerification.IMP</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-imp-a-small-imperative-language">IMP: a small imperative language</a></li><li class="l2"><a href="#sec-arithmetic-expressions">Arithmetic expressions</a></li><li class="l3"><a href="#sec-machine-integers">Machine integers</a></li><li class="l2"><a href="#sec-boolean-expressions">Boolean expressions</a></li><li class="l3"><a href="#sec-derived-forms">Derived forms</a></li><li class="l2"><a href="#sec-commands">Commands</a></li><li class="l2"><a href="#sec-big-step-semantics">Big-step semantics</a></li><li class="l3"><a href="#sec-an-interpreter-with-a-fuel-supply">An interpreter with a fuel supply</a></li><li class="l2"><a href="#sec-small-step-semantics-reduction">Small-step semantics: reduction</a></li><li class="l3"><a href="#sec-big-step-and-small-step-agree">Big-step and small-step agree</a></li><li class="l2"><a href="#sec-small-step-semantics-with-continuations">Small-step semantics with continuations</a></li></ul></div>
+<div class="content">
+<div class="license">  The source language IMP: syntax and semantics.<br><br>  Lean 4 port of `IMP.v` from the Coq development accompanying<br>  Xavier Leroy, *Proving the correctness of a compiler*,<br>  EUTypes 2019 Summer School.<br><br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the definitions and theorem statements follow<br>  the Coq originals, but all proofs and explanatory text have been rewritten<br>  for Lean 4.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.</div>
+<pre class="code"><span class="k">import</span> CompilerVerification.Sequences</pre>
+<div class="doc"><h2 id="sec-imp-a-small-imperative-language">IMP: a small imperative language</h2>
+<p>IMP has integer variables, arithmetic and Boolean expressions, assignment, sequencing, conditionals and <code>while</code> loops.  It is Turing-complete: the loops are unbounded and the integers are unbounded.</p>
+<p>We give it three semantics and relate them:</p>
+<ul><li>a <strong>denotational</strong> semantics for expressions — evaluation <em>functions</em> <code>aeval</code> and <code>beval</code>;</li><li>a <strong>big-step</strong> (natural) semantics for commands — the relation <code>cexec</code>, which describes only terminating executions;</li><li>two <strong>small-step</strong> semantics for commands — the reduction relation <code>red</code>, and the continuation-based relation <code>step</code>.  Small-step semantics can describe diverging executions, which is exactly what we need in order to state that the compiler preserves the behaviour of programs that loop forever.</li></ul></div>
+<pre class="code"><span class="k">namespace</span> IMP
+
+<span class="k">open</span> Sequences</pre>
+<div class="doc decl"><p>Variables are named by strings.</p></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="Ident"><a class="anchor" href="#Ident">Ident</a></span> := String</pre>
+<div class="doc"><h3 id="sec-arithmetic-expressions">Arithmetic expressions</h3></div>
+<div class="doc decl"><p>Abstract syntax of arithmetic expressions.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="aexp"><a class="anchor" href="#aexp">aexp</a></span> <span class="k">where</span>
+  | const (n : Int)
+  | var (x : Ident)
+  | plus (a₁ a₂ : aexp)
+  | minus (a₁ a₂ : aexp)
+  <span class="k">deriving</span> Repr, DecidableEq</pre>
+<div class="doc decl"><p>A store maps each variable to its current value.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Store"><a class="anchor" href="#Store">Store</a></span> : Type := Ident → Int</pre>
+<div class="doc decl"><p>The value denoted by an arithmetic expression in a given store.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="aeval"><a class="anchor" href="#aeval">aeval</a></span> (s : Store) : aexp → Int
+  | .const n =&gt; n
+  | .var x =&gt; s x
+  | .plus a₁ a₂ =&gt; aeval s a₁ + aeval s a₂
+  | .minus a₁ a₂ =&gt; aeval s a₁ - aeval s a₂</pre>
+<div class="doc decl"><p><code>update x v s</code> maps <code>x</code> to <code>v</code> and agrees with <code>s</code> elsewhere.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="update"><a class="anchor" href="#update">update</a></span> (x : Ident) (v : Int) (s : Store) : Store :=
+  <span class="k">fun</span> y =&gt; <span class="k">if</span> y = x <span class="k">then</span> v <span class="k">else</span> s y
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="update_same"><a class="anchor" href="#update_same">update_same</a></span> (x : Ident) (v : Int) (s : Store) : update x v s x = v := <span class="k">by</span>
+  <span class="k">simp</span> [update]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="update_other"><a class="anchor" href="#update_other">update_other</a></span> {x y : Ident} (h : y ≠ x) (v : Int) (s : Store) :
+    update x v s y = s y := <span class="k">by</span>
+  <span class="k">simp</span> [update, h]</pre>
+<div class="doc decl"><p>An evaluation function can be <em>run</em>: <code>x + (x - 1)</code> in a store where every variable holds <code>2</code>.</p></div>
+<pre class="code"><span class="k">example</span> : <span class="d" id="aeval"><a class="anchor" href="#aeval">aeval</a></span> (<span class="k">fun</span> _ =&gt; 2) (.plus (.var <span class="s">&quot;x&quot;</span>) (.minus (.var <span class="s">&quot;x&quot;</span>) (.const 1))) = 3 := <span class="k">by</span>
+  native_decide</pre>
+<div class="doc decl"><p>We can also prove properties of a <em>given</em> expression, for every store.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="aeval_xplus1"><a class="anchor" href="#aeval_xplus1">aeval_xplus1</a></span> (s : Store) (x : Ident) :
+    aeval s (.plus (.var x) (.const 1)) &gt; aeval s (.var x) := <span class="k">by</span>
+  <span class="k">simp</span> [aeval]
+  <span class="k">omega</span></pre>
+<div class="doc decl"><p>Which variables occur in an expression.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="freeInAexp"><a class="anchor" href="#freeInAexp">freeInAexp</a></span> (x : Ident) : aexp → Prop
+  | .const _ =&gt; False
+  | .var y =&gt; y = x
+  | .plus a₁ a₂ | .minus a₁ a₂ =&gt; freeInAexp x a₁ ∨ freeInAexp x a₂</pre>
+<div class="doc decl"><p>And we can prove <em>meta</em>-properties, holding for all expressions at once: the value of an expression depends only on its free variables.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="aeval_free"><a class="anchor" href="#aeval_free">aeval_free</a></span> {s₁ s₂ : Store} :
+    ∀ a : aexp, (∀ x, freeInAexp x a → s₁ x = s₂ x) → aeval s₁ a = aeval s₂ a
+  | .const _, _ =&gt; <span class="k">rfl</span>
+  | .var x, h =&gt; h x <span class="k">rfl</span>
+  | .plus a₁ a₂, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [aeval, aeval_free a₁ <span class="k">fun</span> x hx =&gt; h x (.inl hx),
+        aeval_free a₂ <span class="k">fun</span> x hx =&gt; h x (.inr hx)]
+  | .minus a₁ a₂, h =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [aeval, aeval_free a₁ <span class="k">fun</span> x hx =&gt; h x (.inl hx),
+        aeval_free a₂ <span class="k">fun</span> x hx =&gt; h x (.inr hx)]</pre>
+<div class="doc"><h4 id="sec-machine-integers">Machine integers</h4>
+<p>The exercises ask for a version of <code>aeval</code> that detects overflow.  These are the bounds of a 64-bit signed integer.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="minInt"><a class="anchor" href="#minInt">minInt</a></span> : Int := -(2 ^ 63)
+<span class="k">def</span> <span class="d" id="maxInt"><a class="anchor" href="#maxInt">maxInt</a></span> : Int := 2 ^ 63 - 1
+
+<span class="k">def</span> <span class="d" id="checkForOverflow"><a class="anchor" href="#checkForOverflow">checkForOverflow</a></span> (n : Int) : Option Int :=
+  <span class="k">if</span> n &lt; minInt <span class="k">then</span> none <span class="k">else</span> <span class="k">if</span> n &gt; maxInt <span class="k">then</span> none <span class="k">else</span> some n</pre>
+<div class="doc"><h3 id="sec-boolean-expressions">Boolean expressions</h3></div>
+<div class="doc decl"><p>Abstract syntax of Boolean expressions.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="bexp"><a class="anchor" href="#bexp">bexp</a></span> <span class="k">where</span>
+  | true
+  | false
+  | equal (a₁ a₂ : aexp)
+  | lessequal (a₁ a₂ : aexp)
+  | not (b₁ : bexp)
+  | and (b₁ b₂ : bexp)
+  <span class="k">deriving</span> Repr, DecidableEq</pre>
+<div class="doc decl"><p>The truth value denoted by a Boolean expression in a given store.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="beval"><a class="anchor" href="#beval">beval</a></span> (s : Store) : bexp → Bool
+  | .true =&gt; Bool.true
+  | .false =&gt; Bool.false
+  | .equal a₁ a₂ =&gt; aeval s a₁ == aeval s a₂
+  | .lessequal a₁ a₂ =&gt; decide (aeval s a₁ ≤ aeval s a₂)
+  | .not b₁ =&gt; !beval s b₁
+  | .and b₁ b₂ =&gt; beval s b₁ &amp;&amp; beval s b₂</pre>
+<div class="doc"><h4 id="sec-derived-forms">Derived forms</h4>
+<p>The other comparisons and connectives need no new syntax; they are abbreviations.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="bexp.notequal"><a class="anchor" href="#bexp.notequal">bexp.notequal</a></span> (a₁ a₂ : aexp) : bexp := .not (.equal a₁ a₂)
+<span class="k">def</span> <span class="d" id="bexp.greaterequal"><a class="anchor" href="#bexp.greaterequal">bexp.greaterequal</a></span> (a₁ a₂ : aexp) : bexp := .lessequal a₂ a₁
+<span class="k">def</span> <span class="d" id="bexp.greater"><a class="anchor" href="#bexp.greater">bexp.greater</a></span> (a₁ a₂ : aexp) : bexp := .not (.lessequal a₁ a₂)
+<span class="k">def</span> <span class="d" id="bexp.less"><a class="anchor" href="#bexp.less">bexp.less</a></span> (a₁ a₂ : aexp) : bexp := bexp.greater a₂ a₁
+<span class="k">def</span> <span class="d" id="bexp.or"><a class="anchor" href="#bexp.or">bexp.or</a></span> (b₁ b₂ : bexp) : bexp := .not (.and (.not b₁) (.not b₂))</pre>
+<div class="doc decl"><p>The derived <code>or</code> really does denote disjunction — de Morgan, mechanised.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="beval_or"><a class="anchor" href="#beval_or">beval_or</a></span> (s : Store) (b₁ b₂ : bexp) :
+    beval s (bexp.or b₁ b₂) = (beval s b₁ || beval s b₂) := <span class="k">by</span>
+  <span class="k">simp</span> [bexp.or, beval]</pre>
+<div class="doc"><h3 id="sec-commands">Commands</h3></div>
+<div class="doc decl"><p>Abstract syntax of commands (statements).</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="com"><a class="anchor" href="#com">com</a></span> <span class="k">where</span>
+  | skip
+  | assign (x : Ident) (a : aexp)
+  | seq (c₁ c₂ : com)
+  | ifthenelse (b : bexp) (c₁ c₂ : com)
+  | <span class="k">while</span> (b : bexp) (c₁ : com)
+  <span class="k">deriving</span> Repr, DecidableEq
+
+infixr:80 <span class="s">&quot; ;; &quot;</span> =&gt; com.seq</pre>
+<div class="doc decl"><p>Euclidean division by repeated subtraction.  On exit <code>&quot;q&quot;</code> holds the quotient of <code>&quot;a&quot;</code> by <code>&quot;b&quot;</code> and <code>&quot;r&quot;</code> holds the remainder:</p>
+<pre class="doccode">r := a; q := 0;
+<span class="k">while</span> b &lt;= r <span class="k">do</span> r := r - b; q := q + 1 done</pre></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="euclideanDivision"><a class="anchor" href="#euclideanDivision">euclideanDivision</a></span> : com :=
+  .assign <span class="s">&quot;r&quot;</span> (.var <span class="s">&quot;a&quot;</span>) ;;
+  .assign <span class="s">&quot;q&quot;</span> (.const 0) ;;
+  .<span class="k">while</span> (.lessequal (.var <span class="s">&quot;b&quot;</span>) (.var <span class="s">&quot;r&quot;</span>))
+    (.assign <span class="s">&quot;r&quot;</span> (.minus (.var <span class="s">&quot;r&quot;</span>) (.var <span class="s">&quot;b&quot;</span>)) ;;
+     .assign <span class="s">&quot;q&quot;</span> (.plus (.var <span class="s">&quot;q&quot;</span>) (.const 1)))</pre>
+<div class="doc"><h3 id="sec-big-step-semantics">Big-step semantics</h3>
+<p>The obvious idea — an evaluation function <code>cexec : Store → com → Store</code> — is not definable: every Lean function is total, but <code>while true do skip</code> does not terminate.  Worse, no computable function can decide termination of an IMP program.</p>
+<p>The standard answer is to define a <em>relation</em> instead: <code>cexec s c s&#x27;</code> holds exactly when running <code>c</code> from <code>s</code> terminates in <code>s&#x27;</code>.  A derivation of <code>cexec s c s&#x27;</code> is a finite tree, and finiteness is precisely what rules out non-terminating executions.</p></div>
+<div class="doc decl"><p><code>cexec s c s&#x27;</code>: started in store <code>s</code>, the command <code>c</code> terminates in store <code>s&#x27;</code>.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="cexec"><a class="anchor" href="#cexec">cexec</a></span> : Store → com → Store → Prop <span class="k">where</span>
+  | skip (s : Store) : cexec s .skip s
+  | assign (s : Store) (x : Ident) (a : aexp) :
+      cexec s (.assign x a) (update x (aeval s a) s)
+  | seq {c₁ c₂ : com} {s s&#x27; s&#x27;&#x27; : Store} :
+      cexec s c₁ s&#x27; → cexec s&#x27; c₂ s&#x27;&#x27; → cexec s (c₁ ;; c₂) s&#x27;&#x27;
+  | ifthenelse {b : bexp} {c₁ c₂ : com} {s s&#x27; : Store} :
+      cexec s (<span class="k">if</span> beval s b <span class="k">then</span> c₁ <span class="k">else</span> c₂) s&#x27; → cexec s (.ifthenelse b c₁ c₂) s&#x27;
+  | while_done {b : bexp} {c : com} {s : Store} :
+      beval s b = false → cexec s (.<span class="k">while</span> b c) s
+  | while_loop {b : bexp} {c : com} {s s&#x27; s&#x27;&#x27; : Store} :
+      beval s b = true → cexec s c s&#x27; → cexec s&#x27; (.<span class="k">while</span> b c) s&#x27;&#x27; →
+      cexec s (.<span class="k">while</span> b c) s&#x27;&#x27;</pre>
+<div class="doc decl"><p>Nothing diverging satisfies <code>cexec</code>: <code>while true do skip</code> has no final store.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="cexec_infinite_loop"><a class="anchor" href="#cexec_infinite_loop">cexec_infinite_loop</a></span> (s : Store) :
+    ¬ ∃ s&#x27;, cexec s (.<span class="k">while</span> .true .skip) s&#x27; := <span class="k">by</span>
+  <span class="k">have</span> key : ∀ {s c s&#x27;}, cexec s c s&#x27; → c = .<span class="k">while</span> .true .skip → False := <span class="k">by</span>
+    <span class="k">intro</span> s c s&#x27; h
+    <span class="k">induction</span> h <span class="k">with</span>
+    | while_done hb =&gt; <span class="k">intro</span> heq; <span class="k">cases</span> heq; <span class="k">simp</span> [beval] <span class="k">at</span> hb
+    | while_loop _ _ _ _ ih₂ =&gt; <span class="k">intro</span> heq; <span class="k">exact</span> ih₂ heq
+    | _ =&gt; <span class="k">intro</span> heq; <span class="k">cases</span> heq
+  <span class="k">rintro</span> ⟨s&#x27;, h⟩
+  <span class="k">exact</span> key h <span class="k">rfl</span></pre>
+<div class="doc"><h4 id="sec-an-interpreter-with-a-fuel-supply">An interpreter with a fuel supply</h4>
+<p>Our first idea was not entirely wrong.  Bounding the recursion depth by a <code>fuel</code> argument does give a total function, which returns <code>none</code> when the fuel runs out.  It is useless as a semantics — but it is exactly what we want for <em>testing</em> programs.</p></div>
+<div class="doc decl"><p>Run <code>c</code> from <code>s</code>, taking at most <code>fuel</code> recursive steps.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="cexecBounded"><a class="anchor" href="#cexecBounded">cexecBounded</a></span> : Nat → Store → com → Option Store
+  | 0, _, _ =&gt; none
+  | fuel + 1, s, c =&gt;
+    <span class="k">match</span> c <span class="k">with</span>
+    | .skip =&gt; some s
+    | .assign x a =&gt; some (update x (aeval s a) s)
+    | .seq c₁ c₂ =&gt;
+        <span class="k">match</span> cexecBounded fuel s c₁ <span class="k">with</span>
+        | none =&gt; none
+        | some s&#x27; =&gt; cexecBounded fuel s&#x27; c₂
+    | .ifthenelse b c₁ c₂ =&gt;
+        <span class="k">if</span> beval s b <span class="k">then</span> cexecBounded fuel s c₁ <span class="k">else</span> cexecBounded fuel s c₂
+    | .<span class="k">while</span> b c₁ =&gt;
+        <span class="k">if</span> beval s b <span class="k">then</span>
+          <span class="k">match</span> cexecBounded fuel s c₁ <span class="k">with</span>
+          | none =&gt; none
+          | some s&#x27; =&gt; cexecBounded fuel s&#x27; (.<span class="k">while</span> b c₁)
+        <span class="k">else</span> some s</pre>
+<div class="doc decl"><p>14 divided by 3 is 4, remainder 2.</p></div>
+<pre class="code"><span class="k">example</span> :
+    (<span class="k">let</span> s := update <span class="s">&quot;a&quot;</span> 14 (update <span class="s">&quot;b&quot;</span> 3 (<span class="k">fun</span> _ =&gt; 0))
+     (cexecBounded 100 s euclideanDivision).map (<span class="k">fun</span> s&#x27; =&gt; (s&#x27; <span class="s">&quot;q&quot;</span>, s&#x27; <span class="s">&quot;r&quot;</span>)))
+    = some (4, 2) := <span class="k">by</span>
+  native_decide</pre>
+<div class="doc"><h3 id="sec-small-step-semantics-reduction">Small-step semantics: reduction</h3>
+<p>A big-step semantics says nothing about diverging programs — they simply have no derivation, and &quot;no derivation&quot; cannot distinguish an infinite loop from a program that crashes.  A small-step semantics does distinguish them: it describes one elementary computation step at a time, so a diverging program is one with an infinite sequence of steps.</p>
+<p><code>red (c, s) (c&#x27;, s&#x27;)</code> performs one step of <code>c</code> in store <code>s</code>, leaving the residual command <code>c&#x27;</code> still to be run in the updated store <code>s&#x27;</code>.</p></div>
+<div class="doc decl"><p>One step of reduction.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="red"><a class="anchor" href="#red">red</a></span> : com × Store → com × Store → Prop <span class="k">where</span>
+  | assign (x : Ident) (a : aexp) (s : Store) :
+      red (.assign x a, s) (.skip, update x (aeval s a) s)
+  | seq_done (c : com) (s : Store) : red (.skip ;; c, s) (c, s)
+  | seq_step {c₁ c₂ : com} {s₁ s₂ : Store} (c : com) :
+      red (c₁, s₁) (c₂, s₂) → red (c₁ ;; c, s₁) (c₂ ;; c, s₂)
+  | ifthenelse (b : bexp) (c₁ c₂ : com) (s : Store) :
+      red (.ifthenelse b c₁ c₂, s) ((<span class="k">if</span> beval s b <span class="k">then</span> c₁ <span class="k">else</span> c₂), s)
+  | while_done {b : bexp} {c : com} {s : Store} :
+      beval s b = false → red (.<span class="k">while</span> b c, s) (.skip, s)
+  | while_loop {b : bexp} {c : com} {s : Store} :
+      beval s b = true → red (.<span class="k">while</span> b c, s) (c ;; .<span class="k">while</span> b c, s)</pre>
+<div class="doc decl"><p>IMP programs never get stuck: a command that is not <code>skip</code> can always take a step.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="red_progress"><a class="anchor" href="#red_progress">red_progress</a></span> (c : com) (s : Store) :
+    c = .skip ∨ ∃ c&#x27; s&#x27;, red (c, s) (c&#x27;, s&#x27;) := <span class="k">by</span>
+  <span class="k">induction</span> c <span class="k">with</span>
+  | skip =&gt; <span class="k">exact</span> .inl <span class="k">rfl</span>
+  | assign x a =&gt; <span class="k">exact</span> .inr ⟨_, _, .assign x a s⟩
+  | seq c₁ c₂ ih₁ _ =&gt;
+      <span class="k">refine</span> .inr ?_
+      <span class="k">rcases</span> ih₁ <span class="k">with</span> <span class="k">rfl</span> | ⟨c&#x27;, s&#x27;, h⟩
+      · <span class="k">exact</span> ⟨c₂, s, .seq_done c₂ s⟩
+      · <span class="k">exact</span> ⟨c&#x27; ;; c₂, s&#x27;, .seq_step c₂ h⟩
+  | ifthenelse b c₁ c₂ _ _ =&gt; <span class="k">exact</span> .inr ⟨_, _, .ifthenelse b c₁ c₂ s⟩
+  | «<span class="k">while</span>» b c₁ _ =&gt;
+      <span class="k">refine</span> .inr ?_
+      <span class="k">cases</span> hb : beval s b
+      · <span class="k">exact</span> ⟨.skip, s, .while_done hb⟩
+      · <span class="k">exact</span> ⟨c₁ ;; .<span class="k">while</span> b c₁, s, .while_loop hb⟩</pre>
+<div class="doc decl"><p>A program &quot;goes wrong&quot; if it reaches an irreducible state other than <code>skip</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="goesWrong"><a class="anchor" href="#goesWrong">goesWrong</a></span> (c : com) (s : Store) : Prop :=
+  ∃ c&#x27; s&#x27;, Star red (c, s) (c&#x27;, s&#x27;) ∧ Irred red (c&#x27;, s&#x27;) ∧ c&#x27; ≠ .skip
+
+<span class="k">theorem</span> <span class="d" id="not_goesWrong"><a class="anchor" href="#not_goesWrong">not_goesWrong</a></span> (c : com) (s : Store) : ¬ goesWrong c s := <span class="k">by</span>
+  <span class="k">rintro</span> ⟨c&#x27;, s&#x27;, _, hirred, hne⟩
+  <span class="k">rcases</span> red_progress c&#x27; s&#x27; <span class="k">with</span> <span class="k">rfl</span> | ⟨c&#x27;&#x27;, s&#x27;&#x27;, h⟩
+  · <span class="k">exact</span> hne <span class="k">rfl</span>
+  · <span class="k">exact</span> hirred _ h</pre>
+<div class="doc decl"><p>Reduction under a sequence context, generalising <code>red.seq_step</code> from one step to a sequence of steps.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="red_seq_steps"><a class="anchor" href="#red_seq_steps">red_seq_steps</a></span> (c₂ : com) {p q : com × Store} (h : Star red p q) :
+    Star red (p.1 ;; c₂, p.2) (q.1 ;; c₂, q.2) := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | refl =&gt; <span class="k">exact</span> .refl _
+  | step h _ ih =&gt;
+      rename_i x y _ _
+      <span class="k">obtain</span> ⟨cx, sx⟩ := x
+      <span class="k">obtain</span> ⟨cy, sy⟩ := y
+      <span class="k">exact</span> .step (.seq_step c₂ h) ih</pre>
+<div class="doc"><h4 id="sec-big-step-and-small-step-agree">Big-step and small-step agree</h4>
+<p>Termination in the big-step sense coincides with reaching <code>skip</code> in the small-step sense.  One direction is a routine induction on the big-step derivation.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="cexec_to_reds"><a class="anchor" href="#cexec_to_reds">cexec_to_reds</a></span> {s c s&#x27;} (h : cexec s c s&#x27;) : Star red (c, s) (.skip, s&#x27;) := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | skip =&gt; <span class="k">exact</span> .refl _
+  | assign s x a =&gt; <span class="k">exact</span> .one (.assign x a s)
+  | seq _ _ ih₁ ih₂ =&gt;
+      <span class="k">exact</span> (red_seq_steps _ ih₁).trans (.step (.seq_done _ _) ih₂)
+  | ifthenelse _ ih =&gt; <span class="k">exact</span> .step (.ifthenelse _ _ _ _) ih
+  | while_done hb =&gt; <span class="k">exact</span> .one (.while_done hb)
+  | while_loop hb _ _ ih₁ ih₂ =&gt;
+      <span class="k">exact</span> .step (.while_loop hb) ((red_seq_steps _ ih₁).trans (.step (.seq_done _ _) ih₂))</pre>
+<div class="doc decl"><p>The converse needs this key lemma: one reduction step followed by a big-step execution collapses into a single big-step execution.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="red_append_cexec"><a class="anchor" href="#red_append_cexec">red_append_cexec</a></span> {p q : com × Store} (h : red p q) :
+    ∀ {s&#x27;}, cexec q.2 q.1 s&#x27; → cexec p.2 p.1 s&#x27; := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | assign x a s =&gt; <span class="k">intro</span> s&#x27; h; <span class="k">cases</span> h; <span class="k">exact</span> .assign s x a
+  | seq_done c s =&gt; <span class="k">intro</span> s&#x27; h; <span class="k">exact</span> .seq (.skip s) h
+  | seq_step c _ ih =&gt;
+      <span class="k">intro</span> s&#x27; h
+      <span class="k">cases</span> h <span class="k">with</span>
+      | seq h₁ h₂ =&gt; <span class="k">exact</span> .seq (ih h₁) h₂
+  | ifthenelse b c₁ c₂ s =&gt; <span class="k">intro</span> s&#x27; h; <span class="k">exact</span> .ifthenelse h
+  | while_done hb =&gt; <span class="k">intro</span> s&#x27; h; <span class="k">cases</span> h; <span class="k">exact</span> .while_done hb
+  | while_loop hb =&gt;
+      <span class="k">intro</span> s&#x27; h
+      <span class="k">cases</span> h <span class="k">with</span>
+      | seq h₁ h₂ =&gt; <span class="k">exact</span> .while_loop hb h₁ h₂
+
+<span class="k">theorem</span> <span class="d" id="reds_to_cexec"><a class="anchor" href="#reds_to_cexec">reds_to_cexec</a></span> {s c s&#x27;} (h : Star red (c, s) (.skip, s&#x27;)) : cexec s c s&#x27; := <span class="k">by</span>
+  generalize hp : (c, s) = p <span class="k">at</span> h
+  generalize hq : ((.skip : com), s&#x27;) = q <span class="k">at</span> h
+  <span class="k">induction</span> h <span class="k">generalizing</span> c s <span class="k">with</span>
+  | refl a =&gt; <span class="k">cases</span> hp; <span class="k">cases</span> hq; <span class="k">exact</span> .skip _
+  | step h _ ih =&gt;
+      rename_i x y _ _
+      <span class="k">obtain</span> ⟨cy, sy⟩ := y
+      <span class="k">cases</span> hp
+      <span class="k">exact</span> red_append_cexec h (ih <span class="k">rfl</span> hq)</pre>
+<div class="doc"><h3 id="sec-small-step-semantics-with-continuations">Small-step semantics with continuations</h3>
+<p>The reduction relation rebuilds a whole command at every step, which makes it awkward to relate to a machine that just moves a program counter.  The continuation semantics separates the two halves of a configuration:</p>
+<ul><li>the <strong>sub-command under focus</strong>, where computation happens;</li><li>the <strong>continuation</strong>, describing what remains to be done once the sub-command finishes.</li></ul>
+<p>This is much closer to the machine, and it extends painlessly to other control structures — see the exercises on <code>break</code> and <code>continue</code>.</p></div>
+<div class="doc decl"><p>What remains to be executed after the command under focus terminates.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="cont"><a class="anchor" href="#cont">cont</a></span> <span class="k">where</span>
+<span class="c">  -- Nothing remains; execution stops.</span>
+  | stop
+<span class="c">  -- Run `c`, then continue with `k`.</span>
+  | seq (c : com) (k : cont)
+<span class="c">  -- Re-enter the loop `while b do c`, then continue with `k`.</span>
+  | <span class="k">while</span> (b : bexp) (c : com) (k : cont)
+  <span class="k">deriving</span> Repr, DecidableEq</pre>
+<div class="doc decl"><p>Rebuilding the whole command from a focus and a continuation: <code>c</code> is placed leftmost in the nest of sequences described by <code>k</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="applyCont"><a class="anchor" href="#applyCont">applyCont</a></span> : cont → com → com
+  | .stop, c =&gt; c
+  | .seq c₁ k₁, c =&gt; applyCont k₁ (c ;; c₁)
+  | .<span class="k">while</span> b₁ c₁ k₁, c =&gt; applyCont k₁ (c ;; .<span class="k">while</span> b₁ c₁)</pre>
+<div class="doc decl"><p>Transitions between triples (focus, continuation, store).  The rules split into three kinds: <em>computation</em> (evaluate an expression and act on the result), <em>focusing</em> (descend into a sub-command, pushing onto the continuation), and <em>resumption</em> (the focus is <code>skip</code>, so pop the continuation).</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="step"><a class="anchor" href="#step">step</a></span> : com × cont × Store → com × cont × Store → Prop <span class="k">where</span>
+<span class="c">  -- computation</span>
+  | assign (x : Ident) (a : aexp) (k : cont) (s : Store) :
+      step (.assign x a, k, s) (.skip, k, update x (aeval s a) s)
+<span class="c">  -- focusing</span>
+  | seq (c₁ c₂ : com) (s : Store) (k : cont) :
+      step (c₁ ;; c₂, k, s) (c₁, .seq c₂ k, s)
+<span class="c">  -- computation</span>
+  | ifthenelse (b : bexp) (c₁ c₂ : com) (k : cont) (s : Store) :
+      step (.ifthenelse b c₁ c₂, k, s) ((<span class="k">if</span> beval s b <span class="k">then</span> c₁ <span class="k">else</span> c₂), k, s)
+<span class="c">  -- computation</span>
+  | while_done {b : bexp} {c : com} {k : cont} {s : Store} :
+      beval s b = false → step (.<span class="k">while</span> b c, k, s) (.skip, k, s)
+<span class="c">  -- computation and focusing</span>
+  | while_true {b : bexp} {c : com} {k : cont} {s : Store} :
+      beval s b = true → step (.<span class="k">while</span> b c, k, s) (c, .<span class="k">while</span> b c k, s)
+<span class="c">  -- resumption</span>
+  | skip_seq (c : com) (k : cont) (s : Store) :
+      step (.skip, .seq c k, s) (c, k, s)
+<span class="c">  -- resumption</span>
+  | skip_while (b : bexp) (c : com) (k : cont) (s : Store) :
+      step (.skip, .<span class="k">while</span> b c k, s) (.<span class="k">while</span> b c, k, s)</pre>
+<div class="doc decl"><p>A big-step execution gives rise to a sequence of continuation steps that leaves the continuation untouched.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="cexec_to_steps"><a class="anchor" href="#cexec_to_steps">cexec_to_steps</a></span> {s c s&#x27;} (h : cexec s c s&#x27;) (k : cont) :
+    Star step (c, k, s) (.skip, k, s&#x27;) := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">generalizing</span> k <span class="k">with</span>
+  | skip =&gt; <span class="k">exact</span> .refl _
+  | assign s x a =&gt; <span class="k">exact</span> .one (.assign x a k s)
+  | seq _ _ ih₁ ih₂ =&gt;
+      <span class="k">exact</span> .step (.seq _ _ _ _) ((ih₁ _).trans (.step (.skip_seq _ _ _) (ih₂ _)))
+  | ifthenelse _ ih =&gt; <span class="k">exact</span> .step (.ifthenelse _ _ _ _ _) (ih _)
+  | while_done hb =&gt; <span class="k">exact</span> .one (.while_done hb)
+  | while_loop hb _ _ ih₁ ih₂ =&gt;
+      <span class="k">exact</span> .step (.while_true hb)
+        ((ih₁ _).trans (.step (.skip_while _ _ _ _) (ih₂ _)))
+
+<span class="k">end</span> IMP</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>CompilerVerification/IMP.lean</code>.
+</div>
+</body>
+</html>

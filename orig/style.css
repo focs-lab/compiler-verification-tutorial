@@ -1,0 +1,12 @@
+body {
+  color: black; background: white;
+  margin-left: 5%; margin-right: 5%;
+}
+h1,h2,h3,h4,h5,h6 { 
+  font-family: Verdana,Arial,Sans-serif;
+  /*letter-spacing: 0.1em; */
+}
+h2 { margin-left: -5%;}
+h3 { margin-left: -3%; }
+hr { margin-left: -5%; margin-right:-5%; }
+li,dd { margin-bottom: 0.5em; }

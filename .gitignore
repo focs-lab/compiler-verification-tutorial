@@ -1,0 +1,18 @@
+# Lean build artifacts
+/.lake/
+*.olean
+*.ilean
+*.trace
+
+# LaTeX auxiliary files
+slides/*.aux
+slides/*.log
+slides/*.nav
+slides/*.out
+slides/*.snm
+slides/*.toc
+slides/*.vrb
+
+# macOS
+.DS_Store
+slides/slides.pdf

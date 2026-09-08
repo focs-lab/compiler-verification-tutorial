@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proving the correctness of a compiler — Lean 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h2 class="school">A Lean 4 port of the
+<a href="https://xavierleroy.org/courses/EUTypes-2019/">EUTypes 2019 summer school course</a></h2>
+<h1>Proving the correctness of a compiler</h1>
+<h3 class="author">Original Coq course by Xavier Leroy</h3>
+<h4 class="affil">Collège de France and Inria Paris</h4>
+
+<h3>Abstract</h3>
+
+<p>
+Formal semantics is not only a tool for reasoning about individual programs.
+It also lets us reason about the tools that transform programs — compilers and
+static analysers — and state precisely what it means for them to be correct.
+With a proof assistant we can then discharge those statements, and so replace
+trust in a compiler with a theorem about it.
+</p>
+
+<p>
+The course develops this on a small but complete example: a compiler from IMP,
+a simple imperative language, to a stack machine, together with two dataflow
+optimizations. The original development was carried out in Coq;
+<strong>this is a translation of it into Lean 4</strong>, with all proofs and
+explanatory text rewritten for Lean.
+</p>
+
+<p class="note">
+Everything is proved. There is no <code>sorry</code> in the library, and the
+headline theorems depend only on Lean's three standard axioms
+(<code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code>).
+The development has no dependencies beyond Lean's core library — not even
+Mathlib — so it builds in seconds.
+</p>
+
+<h3>Course material</h3>
+
+<p><a href="slides.pdf">The slides</a> for the lectures (64 slides, PDF).
+These were written for this Lean development; they follow the syllabus and
+section numbering of the original course.</p>
+
+<p>A <a href="compilerverif-lean.zip">ZIP archive</a> containing all the Lean
+sources. Do <code>lake build</code> to compile
+(<a href="https://github.com/leanprover/elan">elan</a> will fetch the pinned
+toolchain automatically).</p>
+
+<p>The Lean sources, pretty-printed and HTML-formatted:</p>
+<ul>
+<li><a href="html/CompilerVerification.Sequences.html">Sequences</a>:
+    a library of definitions and lemmas about sequences of transitions.
+<li><a href="html/CompilerVerification.IMP.html">IMP</a>:
+    the source language and its semantics.
+<li><a href="html/CompilerVerification.Compil.html">Compil</a>:
+    the compiler and its correctness proofs.
+<li><a href="html/CompilerVerification.Constprop.html">Constprop</a>:
+    an optimization: constant propagation.
+<li><a href="html/CompilerVerification.Deadcode.html">Deadcode</a>:
+    another optimization: dead code elimination via liveness analysis.
+<li><a href="html/CompilerVerification.Fixpoints.html">Fixpoints</a>:
+    more on fixpoints and static analysis.
+<li><a href="html/Exercises.html">Exercises</a>:
+    the exercises of the original course, restated for Lean.
+</ul>
+
+<h3>The main theorems</h3>
+
+<p>Semantic preservation, for terminating and for diverging source programs
+(in <a href="html/CompilerVerification.Compil.html">Compil</a>):</p>
+
+<pre class="code">theorem compileProgram_correct_terminating {s c s'} (h : cexec s c s') :
+    machineTerminates (compileProgram c) s s'
+
+theorem compileProgram_correct_diverging {c : com} {s : Store}
+    (h : Infseq step (c, .stop, s)) : machineDiverges (compileProgram c) s</pre>
+
+<p>Semantic preservation for the two optimizations
+(in <a href="html/CompilerVerification.Constprop.html">Constprop</a> and
+<a href="html/CompilerVerification.Deadcode.html">Deadcode</a>):</p>
+
+<pre class="code">theorem cpCom_correct_terminating : ∀ (c : com) {s₁ s₂ : Store} {S₁ : AStore},
+    cexec s₁ c s₂ → Matches s₁ S₁ → cexec s₁ (cpCom S₁ c) s₂
+
+theorem dce_correct_terminating {s c s'} (h : cexec s c s') :
+    ∀ (L : IdentSet) (s₁ : Store), agree (live c L) s s₁ →
+    ∃ s₁', cexec s₁ (dce c L) s₁' ∧ agree L s' s₁'</pre>
+
+<h3>Notes on the port</h3>
+
+<p>The definitions and theorem statements follow the Coq sources; the proofs
+and prose are new. Three places where Lean pulled the development in a
+different direction:</p>
+
+<ul>
+<li><strong>Divergence.</strong> Coq uses a <code>CoInductive</code>
+    predicate. Lean 4 has no coinductive types, so <code>Infseq</code> is
+    defined directly as the greatest fixpoint — the existence of an invariant
+    closed under one transition — which makes the coinduction principle fall
+    out as the definition.
+<li><strong>Finite maps and sets.</strong> Coq's <code>FMaps</code> and
+    <code>FSets</code> have no counterpart in Lean's core library, so abstract
+    stores and variable sets are association lists and plain lists. This also
+    changes the well-foundedness argument in Fixpoints: instead of a finite
+    map's cardinal, the measure is the length of the deduplicated key list.
+<li><strong>Program-counter arithmetic.</strong> Coq's <code>eauto with
+    code</code> and <code>autorewrite with code</code> have no Lean
+    equivalent, so the correctness lemmas take the target program counter as a
+    variable constrained by an equation, leaving <code>omega</code> to do the
+    arithmetic.
+</ul>
+
+<p>See <a href="README.md">README.md</a> for the full list.</p>
+
+<p>The original Coq course material — sources, coqdoc HTML, slides and papers
+— is archived under <a href="orig/index.html"><code>orig/</code></a>, so the
+port can be read side by side with the development it was translated from.</p>
+
+<h3>Introductory reading</h3>
+
+<ul>
+<li>Xavier Leroy.
+<a href="https://xavierleroy.org/publi/compcert-CACM.pdf">Formal verification
+of a realistic compiler</a>, Comm. ACM 52(7):107-115, 2009.
+</ul>
+
+<h3>Further reading</h3>
+
+<ul>
+<li>Benjamin Pierce et al.
+<a href="http://www.cis.upenn.edu/~bcpierce/sf/">Software Foundations</a>.
+<li>Yves Bertot.
+<a href="http://hal.inria.fr/inria-00329572/fr/">Structural abstract
+interpretation, A formal study using Coq</a>.
+<li>Xavier Leroy.
+<a href="http://xavierleroy.org/publi/compcert-backend.pdf">A formally verified
+compiler back-end</a>.
+</ul>
+
+<hr>
+<p class="licence">
+The original Coq sources are copyright 2019, 2025 Xavier Leroy, distributed
+under the GNU Lesser General Public License, version 2.1 or (at your option)
+any later version. This Lean translation is a modified work distributed under
+the same terms; see <a href="LICENSE.md">LICENSE.md</a>. The slides here are
+newly written and are not a translation of the original slide deck.
+</p>
+
+</body>
+</html>

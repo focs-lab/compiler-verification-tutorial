@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CompilerVerification.Compil</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.IMP.html">&larr; CompilerVerification.IMP</a> &nbsp; <a href="CompilerVerification.Constprop.html">CompilerVerification.Constprop &rarr;</a></span>
+</div>
+<h1 class="modname">CompilerVerification.Compil</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-compiling-imp-to-a-stack-machine">Compiling IMP to a stack machine</a></li><li class="l2"><a href="#sec-the-machine">The machine</a></li><li class="l2"><a href="#sec-the-compilation-scheme">The compilation scheme</a></li><li class="l2"><a href="#sec-reasoning-about-pieces-of-code">Reasoning about pieces of code</a></li><li class="l3"><a href="#sec-smart-transition-lemmas">Smart transition lemmas</a></li><li class="l2"><a href="#sec-correctness-for-terminating-programs">Correctness for terminating programs</a></li><li class="l2"><a href="#sec-full-correctness-a-simulation-argument">Full correctness: a simulation argument</a></li><li class="l3"><a href="#sec-the-anti-stuttering-measure">The anti-stuttering measure</a></li><li class="l3"><a href="#sec-inverting-compilecont">Inverting `compileCont`</a></li><li class="l3"><a href="#sec-the-simulation-diagram">The simulation diagram</a></li></ul></div>
+<div class="content">
+<div class="license">  The target language (a stack machine), the compiler, and its correctness<br>  proofs.<br><br>  Lean 4 port of `Compil.v` from the Coq development accompanying<br>  Xavier Leroy, *Proving the correctness of a compiler*,<br>  EUTypes 2019 Summer School.<br><br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the definitions and theorem statements follow<br>  the Coq originals, but all proofs and explanatory text have been rewritten<br>  for Lean 4.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.</div>
+<pre class="code"><span class="k">import</span> CompilerVerification.IMP</pre>
+<div class="doc"><h2 id="sec-compiling-imp-to-a-stack-machine">Compiling IMP to a stack machine</h2>
+<p>The target is a machine in the style of an old RPN pocket calculator: a stack holds intermediate results, and each instruction pops its arguments off the stack and pushes its result back.</p>
+<p>The plan of this file:</p>
+<p>1. the instruction set and its operational semantics; 2. the compilation scheme; 3. correctness for <em>terminating</em> source programs, proved against the big-step semantics of IMP; 4. correctness for <em>all</em> source programs, terminating or diverging, proved as a simulation diagram against the continuation semantics of IMP.</p>
+<p>Step 4 is the real theorem.  Step 3 is a warm-up that already contains the essential inductions on expressions.</p></div>
+<pre class="code"><span class="k">namespace</span> Compil
+
+<span class="k">open</span> IMP Sequences</pre>
+<div class="doc"><h3 id="sec-the-machine">The machine</h3></div>
+<div class="doc decl"><p>The instruction set.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="instr"><a class="anchor" href="#instr">instr</a></span> <span class="k">where</span>
+<span class="c">  -- push the integer `n`</span>
+  | const (n : Int)
+<span class="c">  -- push the current value of variable `x`</span>
+  | var (x : Ident)
+<span class="c">  -- pop an integer, assign it to variable `x`</span>
+  | setvar (x : Ident)
+<span class="c">  -- pop two integers, push their sum</span>
+  | add
+<span class="c">  -- pop one integer, push its opposite</span>
+  | opp
+<span class="c">  -- skip `d` instructions forward (or backward if `d &lt; 0`)</span>
+  | branch (d : Int)
+<span class="c">  -- pop two integers; skip `d₁` instructions if equal, `d₀` if not</span>
+  | beq (d₁ d₀ : Int)
+<span class="c">  -- pop two integers; skip `d₁` instructions if `≤`, `d₀` if `&gt;`</span>
+  | ble (d₁ d₀ : Int)
+<span class="c">  -- stop execution</span>
+  | halt
+  <span class="k">deriving</span> Repr, DecidableEq</pre>
+<div class="doc decl"><p>A piece of machine code is a list of instructions.</p></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="Code"><a class="anchor" href="#Code">Code</a></span> := List instr</pre>
+<div class="doc decl"><p>The number of instructions in a piece of code, as an integer — program counters are integers, since branches may go backwards.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="codelen"><a class="anchor" href="#codelen">codelen</a></span> (c : Code) : Int := (c.length : Int)
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="codelen_nil"><a class="anchor" href="#codelen_nil">codelen_nil</a></span> : codelen [] = 0 := <span class="k">rfl</span>
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="codelen_cons"><a class="anchor" href="#codelen_cons">codelen_cons</a></span> (i : instr) (c : Code) : codelen (i :: c) = codelen c + 1 := <span class="k">by</span>
+  <span class="k">simp</span> [codelen]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="codelen_app"><a class="anchor" href="#codelen_app">codelen_app</a></span> (c₁ c₂ : Code) :
+    codelen (c₁ ++ c₂) = codelen c₁ + codelen c₂ := <span class="k">by</span>
+  <span class="k">simp</span> [codelen]
+
+<span class="k">theorem</span> <span class="d" id="codelen_nonneg"><a class="anchor" href="#codelen_nonneg">codelen_nonneg</a></span> (c : Code) : 0 ≤ codelen c := <span class="k">by</span>
+  <span class="k">simp</span> [codelen]</pre>
+<div class="doc decl"><p>The machine&#x27;s evaluation stack.</p></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="Stack"><a class="anchor" href="#Stack">Stack</a></span> := List Int</pre>
+<div class="doc decl"><p>A machine configuration: program counter, stack, store.  The code itself is fixed throughout an execution and is carried separately.</p></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="Config"><a class="anchor" href="#Config">Config</a></span> := Int × Stack × Store</pre>
+<div class="doc decl"><p><code>instrAt C pc</code> is the instruction at position <code>pc</code> in <code>C</code>, if any.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="instrAt"><a class="anchor" href="#instrAt">instrAt</a></span> : Code → Int → Option instr
+  | [], _ =&gt; none
+  | i :: C&#x27;, pc =&gt; <span class="k">if</span> pc = 0 <span class="k">then</span> some i <span class="k">else</span> instrAt C&#x27; (pc - 1)</pre>
+<div class="doc decl"><p>The semantics of the machine, in small-step style: one transition per instruction executed.  <code>halt</code> has no transition — that is what makes it stop the machine rather than get it stuck.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="transition"><a class="anchor" href="#transition">transition</a></span> (C : Code) : Config → Config → Prop <span class="k">where</span>
+  | const {pc stk s n} :
+      instrAt C pc = some (.const n) →
+      transition C (pc, stk, s) (pc + 1, n :: stk, s)
+  | var {pc stk s x} :
+      instrAt C pc = some (.var x) →
+      transition C (pc, stk, s) (pc + 1, s x :: stk, s)
+  | setvar {pc stk s x n} :
+      instrAt C pc = some (.setvar x) →
+      transition C (pc, n :: stk, s) (pc + 1, stk, update x n s)
+  | add {pc stk s n₁ n₂} :
+      instrAt C pc = some .add →
+      transition C (pc, n₂ :: n₁ :: stk, s) (pc + 1, (n₁ + n₂) :: stk, s)
+  | opp {pc stk s n} :
+      instrAt C pc = some .opp →
+      transition C (pc, n :: stk, s) (pc + 1, (-n) :: stk, s)
+  | branch {pc stk s d pc&#x27;} :
+      instrAt C pc = some (.branch d) → pc&#x27; = pc + 1 + d →
+      transition C (pc, stk, s) (pc&#x27;, stk, s)
+  | beq {pc stk s d₁ d₀ n₁ n₂ pc&#x27;} :
+      instrAt C pc = some (.beq d₁ d₀) →
+      pc&#x27; = pc + 1 + (<span class="k">if</span> n₁ = n₂ <span class="k">then</span> d₁ <span class="k">else</span> d₀) →
+      transition C (pc, n₂ :: n₁ :: stk, s) (pc&#x27;, stk, s)
+  | ble {pc stk s d₁ d₀ n₁ n₂ pc&#x27;} :
+      instrAt C pc = some (.ble d₁ d₀) →
+      pc&#x27; = pc + 1 + (<span class="k">if</span> n₁ ≤ n₂ <span class="k">then</span> d₁ <span class="k">else</span> d₀) →
+      transition C (pc, n₂ :: n₁ :: stk, s) (pc&#x27;, stk, s)</pre>
+<div class="doc decl"><p>Zero, one or several machine transitions.</p></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="transitions"><a class="anchor" href="#transitions">transitions</a></span> (C : Code) : Config → Config → Prop := Star (transition C)</pre>
+<div class="doc decl"><p>Execution starts at <code>pc = 0</code> with an empty stack, and succeeds when it reaches a <code>halt</code> with an empty stack.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="machineTerminates"><a class="anchor" href="#machineTerminates">machineTerminates</a></span> (C : Code) (sInit sFinal : Store) : Prop :=
+  ∃ pc, transitions C (0, [], sInit) (pc, [], sFinal) ∧ instrAt C pc = some .halt</pre>
+<div class="doc decl"><p>The machine may instead run forever.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="machineDiverges"><a class="anchor" href="#machineDiverges">machineDiverges</a></span> (C : Code) (sInit : Store) : Prop :=
+  Infseq (transition C) (0, [], sInit)</pre>
+<div class="doc decl"><p>Or it may get stuck: no transition applies, and it is not sitting at a <code>halt</code> with an empty stack.  Compiled code never does this.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="machineGoesWrong"><a class="anchor" href="#machineGoesWrong">machineGoesWrong</a></span> (C : Code) (sInit : Store) : Prop :=
+  ∃ pc stk s, transitions C (0, [], sInit) (pc, stk, s)
+    ∧ Irred (transition C) (pc, stk, s)
+    ∧ (instrAt C pc ≠ some .halt ∨ stk ≠ [])</pre>
+<div class="doc decl"><p>The outcome of running the machine interpreter below.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="machineResult"><a class="anchor" href="#machineResult">machineResult</a></span> <span class="k">where</span>
+<span class="c">  -- the interpreter ran out of fuel</span>
+  | timeout
+<span class="c">  -- the machine got stuck</span>
+  | stuck
+<span class="c">  -- the machine halted with this store</span>
+  | terminates (s : Store)</pre>
+<div class="doc decl"><p>An executable interpreter for the machine, useful for trying out compiled code.  As with <code>cexecBounded</code>, a fuel argument keeps it total.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="machInterp"><a class="anchor" href="#machInterp">machInterp</a></span> (C : Code) : Nat → Int → Stack → Store → machineResult
+  | 0, _, _, _ =&gt; .timeout
+  | fuel + 1, pc, stk, s =&gt;
+    <span class="k">match</span> instrAt C pc, stk <span class="k">with</span>
+    | some .halt, [] =&gt; .terminates s
+    | some (.const n), stk =&gt; machInterp C fuel (pc + 1) (n :: stk) s
+    | some (.var x), stk =&gt; machInterp C fuel (pc + 1) (s x :: stk) s
+    | some (.setvar x), n :: stk =&gt; machInterp C fuel (pc + 1) stk (update x n s)
+    | some .add, n₂ :: n₁ :: stk =&gt; machInterp C fuel (pc + 1) ((n₁ + n₂) :: stk) s
+    | some .opp, n :: stk =&gt; machInterp C fuel (pc + 1) ((-n) :: stk) s
+    | some (.branch d), stk =&gt; machInterp C fuel (pc + 1 + d) stk s
+    | some (.beq d₁ d₀), n₂ :: n₁ :: stk =&gt;
+        machInterp C fuel (pc + 1 + (<span class="k">if</span> n₁ = n₂ <span class="k">then</span> d₁ <span class="k">else</span> d₀)) stk s
+    | some (.ble d₁ d₀), n₂ :: n₁ :: stk =&gt;
+        machInterp C fuel (pc + 1 + (<span class="k">if</span> n₁ ≤ n₂ <span class="k">then</span> d₁ <span class="k">else</span> d₀)) stk s
+    | _, _ =&gt; .stuck</pre>
+<div class="doc"><h3 id="sec-the-compilation-scheme">The compilation scheme</h3></div>
+<div class="doc decl"><p>Code for an arithmetic expression: straight-line code that leaves the value of the expression on top of the stack.  This is the familiar translation to reverse Polish notation.  The one twist is that the machine has no subtraction instruction, so <code>a - b</code> is compiled as <code>a + (-b)</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="compileAexp"><a class="anchor" href="#compileAexp">compileAexp</a></span> : aexp → Code
+  | .const n =&gt; [.const n]
+  | .var x =&gt; [.var x]
+  | .plus a₁ a₂ =&gt; compileAexp a₁ ++ compileAexp a₂ ++ [.add]
+  | .minus a₁ a₂ =&gt; compileAexp a₁ ++ compileAexp a₂ ++ [.opp, .add]</pre>
+<div class="doc decl"><p>Code for a Boolean expression.  Rather than compute <code>0</code> or <code>1</code> on the stack, <code>compileBexp b d₁ d₀</code> produces code that <em>branches</em>: it skips <code>d₁</code> instructions forward if <code>b</code> is true and <code>d₀</code> if <code>b</code> is false, leaving the stack and the store unchanged.  This is both shorter and faster, since the Boolean value is never materialised.</p>
+<p>The offsets in the <code>and</code> case are the delicate part.  <code>code₁</code> is compiled with a &quot;true&quot; offset of <code>0</code>, so that when <code>b₁</code> holds we fall straight through into <code>code₂</code>; its &quot;false&quot; offset must skip over the whole of <code>code₂</code> and then take <code>b</code>&#x27;s own false branch, whence <code>codelen code₂ + d₀</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="compileBexp"><a class="anchor" href="#compileBexp">compileBexp</a></span> : bexp → Int → Int → Code
+  | .true, d₁, _ =&gt; <span class="k">if</span> d₁ = 0 <span class="k">then</span> [] <span class="k">else</span> [.branch d₁]
+  | .false, _, d₀ =&gt; <span class="k">if</span> d₀ = 0 <span class="k">then</span> [] <span class="k">else</span> [.branch d₀]
+  | .equal a₁ a₂, d₁, d₀ =&gt; compileAexp a₁ ++ compileAexp a₂ ++ [.beq d₁ d₀]
+  | .lessequal a₁ a₂, d₁, d₀ =&gt; compileAexp a₁ ++ compileAexp a₂ ++ [.ble d₁ d₀]
+  | .not b₁, d₁, d₀ =&gt; compileBexp b₁ d₀ d₁
+  | .and b₁ b₂, d₁, d₀ =&gt;
+      <span class="k">let</span> code₂ := compileBexp b₂ d₁ d₀
+      <span class="k">let</span> code₁ := compileBexp b₁ 0 (codelen code₂ + d₀)
+      code₁ ++ code₂</pre>
+<div class="doc decl"><p>Code for a command.  It updates the store as the command prescribes, leaves the stack unchanged, and falls through to the instruction following the generated code.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="compileCom"><a class="anchor" href="#compileCom">compileCom</a></span> : com → Code
+  | .skip =&gt; []
+  | .assign x a =&gt; compileAexp a ++ [.setvar x]
+  | .seq c₁ c₂ =&gt; compileCom c₁ ++ compileCom c₂
+  | .ifthenelse b ifso ifnot =&gt;
+      <span class="k">let</span> codeIfso := compileCom ifso
+      <span class="k">let</span> codeIfnot := compileCom ifnot
+      compileBexp b 0 (codelen codeIfso + 1)
+        ++ codeIfso
+        ++ instr.branch (codelen codeIfnot) :: codeIfnot
+  | .<span class="k">while</span> b body =&gt;
+      <span class="k">let</span> codeBody := compileCom body
+      <span class="k">let</span> codeTest := compileBexp b 0 (codelen codeBody + 1)
+      codeTest ++ codeBody ++ [.branch (-(codelen codeTest + codelen codeBody + 1))]</pre>
+<div class="doc decl"><p>A whole program is a command followed by <code>halt</code>, so that it stops cleanly.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="compileProgram"><a class="anchor" href="#compileProgram">compileProgram</a></span> (p : com) : Code := compileCom p ++ [.halt]</pre>
+<div class="doc decl"><p><code>x := x + 1</code> compiles to four instructions and a halt.</p></div>
+<pre class="code"><span class="k">example</span> : <span class="d" id="compileProgram"><a class="anchor" href="#compileProgram">compileProgram</a></span> (.assign <span class="s">&quot;x&quot;</span> (.plus (.var <span class="s">&quot;x&quot;</span>) (.const 1)))
+    = [.var <span class="s">&quot;x&quot;</span>, .const 1, .add, .setvar <span class="s">&quot;x&quot;</span>, .halt] := <span class="k">by</span> native_decide</pre>
+<div class="doc decl"><p><code>while true do skip</code> compiles to a tight infinite loop.</p></div>
+<pre class="code"><span class="k">example</span> : <span class="d" id="compileProgram"><a class="anchor" href="#compileProgram">compileProgram</a></span> (.<span class="k">while</span> .true .skip) = [.branch (-1), .halt] := <span class="k">by</span> native_decide
+
+<span class="k">example</span> :
+    <span class="d" id="compileProgram"><a class="anchor" href="#compileProgram">compileProgram</a></span> (.ifthenelse (.equal (.var <span class="s">&quot;x&quot;</span>) (.const 1)) (.assign <span class="s">&quot;x&quot;</span> (.const 0)) .skip)
+    = [.var <span class="s">&quot;x&quot;</span>, .const 1, .beq 0 3, .const 0, .setvar <span class="s">&quot;x&quot;</span>, .branch 0, .halt] := <span class="k">by</span>
+  native_decide</pre>
+<div class="doc decl"><p>The last example shows a small inefficiency: <code>branch 0</code> does nothing. This smart constructor avoids emitting it.  (See the exercises.)</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="smartBranch"><a class="anchor" href="#smartBranch">smartBranch</a></span> (d : Int) : Code := <span class="k">if</span> d = 0 <span class="k">then</span> [] <span class="k">else</span> [.branch d]</pre>
+<div class="doc"><h3 id="sec-reasoning-about-pieces-of-code">Reasoning about pieces of code</h3>
+<p>Compiled code for a sub-expression sits <em>inside</em> the code for the whole program, at some offset.  <code>CodeAt C pc C&#x27;</code> says that <code>C&#x27;</code> occurs in <code>C</code> starting at position <code>pc</code>; every correctness statement below is relative to such a hypothesis.</p></div>
+<div class="doc decl"><p><code>CodeAt C pc C&#x27;</code>: the code <code>C&#x27;</code> occurs at position <code>pc</code> inside <code>C</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="CodeAt"><a class="anchor" href="#CodeAt">CodeAt</a></span> (C : Code) (pc : Int) (C&#x27; : Code) : Prop :=
+  ∃ C₁ C₃, C = C₁ ++ C&#x27; ++ C₃ ∧ pc = codelen C₁
+
+<span class="k">theorem</span> <span class="d" id="instrAt_app"><a class="anchor" href="#instrAt_app">instrAt_app</a></span> (i : instr) (c₂ c₁ : Code) {pc : Int} (h : pc = codelen c₁) :
+    instrAt (c₁ ++ i :: c₂) pc = some i := <span class="k">by</span>
+  <span class="k">induction</span> c₁ <span class="k">generalizing</span> pc <span class="k">with</span>
+  | nil =&gt; <span class="k">subst</span> h; <span class="k">rfl</span>
+  | cons a c₁ ih =&gt;
+      <span class="k">have</span> hne : pc ≠ 0 := <span class="k">by</span>
+        <span class="k">have</span> := codelen_nonneg c₁
+        <span class="k">simp</span> only [codelen_cons] <span class="k">at</span> h; <span class="k">omega</span>
+      <span class="k">simp</span> only [List.cons_append, instrAt, if_neg hne]
+      <span class="k">exact</span> ih (<span class="k">by</span> <span class="k">simp</span> only [codelen_cons] <span class="k">at</span> h; <span class="k">omega</span>)
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.head"><a class="anchor" href="#CodeAt.head">CodeAt.head</a></span> {C : Code} {pc : Int} {i : instr} {C&#x27; : Code}
+    (h : CodeAt C pc (i :: C&#x27;)) : instrAt C pc = some i := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨C₁, C₃, <span class="k">rfl</span>, <span class="k">rfl</span>⟩ := h
+  rw [List.append_assoc]
+  <span class="k">exact</span> instrAt_app i (C&#x27; ++ C₃) C₁ <span class="k">rfl</span>
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.tail&#x27;"><a class="anchor" href="#CodeAt.tail&#x27;">CodeAt.tail&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {i : instr} {C&#x27; : Code}
+    (h : CodeAt C pc (i :: C&#x27;)) (e : pc&#x27; = pc + 1) : CodeAt C pc&#x27; C&#x27; := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨C₁, C₃, <span class="k">rfl</span>, <span class="k">rfl</span>⟩ := h
+  <span class="k">exact</span> ⟨C₁ ++ [i], C₃, <span class="k">by</span> <span class="k">simp</span>, <span class="k">by</span> <span class="k">simp</span> [e]⟩
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.tail"><a class="anchor" href="#CodeAt.tail">CodeAt.tail</a></span> {C : Code} {pc : Int} {i : instr} {C&#x27; : Code}
+    (h : CodeAt C pc (i :: C&#x27;)) : CodeAt C (pc + 1) C&#x27; := h.tail&#x27; <span class="k">rfl</span>
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.app_left"><a class="anchor" href="#CodeAt.app_left">CodeAt.app_left</a></span> {C : Code} {pc : Int} {D₁ D₂ : Code}
+    (h : CodeAt C pc (D₁ ++ D₂)) : CodeAt C pc D₁ := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨C₁, C₃, <span class="k">rfl</span>, <span class="k">rfl</span>⟩ := h
+  <span class="k">exact</span> ⟨C₁, D₂ ++ C₃, <span class="k">by</span> <span class="k">simp</span>, <span class="k">rfl</span>⟩
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.app_right&#x27;"><a class="anchor" href="#CodeAt.app_right&#x27;">CodeAt.app_right&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {D₁ D₂ : Code}
+    (h : CodeAt C pc (D₁ ++ D₂)) (e : pc&#x27; = pc + codelen D₁) : CodeAt C pc&#x27; D₂ := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨C₁, C₃, <span class="k">rfl</span>, <span class="k">rfl</span>⟩ := h
+  <span class="k">exact</span> ⟨C₁ ++ D₁, C₃, <span class="k">by</span> <span class="k">simp</span>, <span class="k">by</span> <span class="k">simp</span> [e]⟩
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.app_right"><a class="anchor" href="#CodeAt.app_right">CodeAt.app_right</a></span> {C : Code} {pc : Int} {D₁ D₂ : Code}
+    (h : CodeAt C pc (D₁ ++ D₂)) : CodeAt C (pc + codelen D₁) D₂ := h.app_right&#x27; <span class="k">rfl</span>
+
+<span class="k">theorem</span> <span class="d" id="CodeAt.nil"><a class="anchor" href="#CodeAt.nil">CodeAt.nil</a></span> {C : Code} {pc : Int} {D : Code} (h : CodeAt C pc D) : CodeAt C pc [] := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨C₁, C₃, <span class="k">rfl</span>, <span class="k">rfl</span>⟩ := h
+  <span class="k">exact</span> ⟨C₁, D ++ C₃, <span class="k">by</span> <span class="k">simp</span>, <span class="k">rfl</span>⟩
+
+<span class="k">theorem</span> <span class="d" id="instrAt_codeAt_nil"><a class="anchor" href="#instrAt_codeAt_nil">instrAt_codeAt_nil</a></span> {C : Code} {pc : Int} {i : instr} (h : instrAt C pc = some i) :
+    CodeAt C pc [] := <span class="k">by</span>
+  <span class="k">induction</span> C <span class="k">generalizing</span> pc <span class="k">with</span>
+  | nil =&gt; <span class="k">simp</span> [instrAt] <span class="k">at</span> h
+  | cons a C ih =&gt;
+      by_cases hpc : pc = 0
+      · <span class="k">exact</span> ⟨[], a :: C, <span class="k">by</span> <span class="k">simp</span>, <span class="k">by</span> <span class="k">simp</span> [hpc]⟩
+      · <span class="k">simp</span> only [instrAt, if_neg hpc] <span class="k">at</span> h
+        <span class="k">obtain</span> ⟨C₁, C₃, hC, he⟩ := ih h
+        <span class="k">exact</span> ⟨a :: C₁, C₃, <span class="k">by</span> <span class="k">simp</span> [hC], <span class="k">by</span> <span class="k">simp</span> [codelen_cons]; <span class="k">omega</span>⟩</pre>
+<div class="doc"><h4 id="sec-smart-transition-lemmas">Smart transition lemmas</h4>
+<p>The transition rules above name the successor program counter explicitly as <code>pc + 1</code>.  When we chain many transitions together, we would rather say &quot;the next state has <em>some</em> program counter <code>pc&#x27;</code>, and here is the arithmetic that identifies it&quot; — otherwise every composition needs a rewriting step.  The following variants take that equation as an argument.  <code>add&#x27;</code> additionally lets us name the value pushed, which is what makes the <code>minus</code> case below go through smoothly (the machine computes <code>n₁ + (-n₂)</code>, the source expression denotes <code>n₁ - n₂</code>).</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="transition.const&#x27;"><a class="anchor" href="#transition.const&#x27;">transition.const&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {stk s n}
+    (h : instrAt C pc = some (.const n)) (e : pc&#x27; = pc + 1) :
+    transition C (pc, stk, s) (pc&#x27;, n :: stk, s) := <span class="k">by</span> <span class="k">subst</span> e; <span class="k">exact</span> .const h
+
+<span class="k">theorem</span> <span class="d" id="transition.var&#x27;"><a class="anchor" href="#transition.var&#x27;">transition.var&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {stk s x v}
+    (h : instrAt C pc = some (.var x)) (hv : v = s x) (e : pc&#x27; = pc + 1) :
+    transition C (pc, stk, s) (pc&#x27;, v :: stk, s) := <span class="k">by</span> <span class="k">subst</span> e; <span class="k">subst</span> hv; <span class="k">exact</span> .var h
+
+<span class="k">theorem</span> <span class="d" id="transition.setvar&#x27;"><a class="anchor" href="#transition.setvar&#x27;">transition.setvar&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {stk s x n s&#x27;}
+    (h : instrAt C pc = some (.setvar x)) (hs : s&#x27; = update x n s) (e : pc&#x27; = pc + 1) :
+    transition C (pc, n :: stk, s) (pc&#x27;, stk, s&#x27;) := <span class="k">by</span> <span class="k">subst</span> e; <span class="k">subst</span> hs; <span class="k">exact</span> .setvar h
+
+<span class="k">theorem</span> <span class="d" id="transition.add&#x27;"><a class="anchor" href="#transition.add&#x27;">transition.add&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {stk s n₁ n₂ n}
+    (h : instrAt C pc = some .add) (hn : n = n₁ + n₂) (e : pc&#x27; = pc + 1) :
+    transition C (pc, n₂ :: n₁ :: stk, s) (pc&#x27;, n :: stk, s) := <span class="k">by</span>
+  <span class="k">subst</span> e; <span class="k">subst</span> hn; <span class="k">exact</span> .add h
+
+<span class="k">theorem</span> <span class="d" id="transition.opp&#x27;"><a class="anchor" href="#transition.opp&#x27;">transition.opp&#x27;</a></span> {C : Code} {pc pc&#x27; : Int} {stk s n m}
+    (h : instrAt C pc = some .opp) (hm : m = -n) (e : pc&#x27; = pc + 1) :
+    transition C (pc, n :: stk, s) (pc&#x27;, m :: stk, s) := <span class="k">by</span> <span class="k">subst</span> e; <span class="k">subst</span> hm; <span class="k">exact</span> .opp h</pre>
+<div class="doc"><h3 id="sec-correctness-for-terminating-programs">Correctness for terminating programs</h3>
+<p>Each of the three lemmas below states that the generated code meets the informal specification given when it was defined.  In each case the target program counter is a variable constrained by an equation, so the pieces compose without arithmetic rewriting at every step.</p></div>
+<div class="doc decl"><p>The code for <code>a</code> runs straight through, pushes the value of <code>a</code>, and leaves the store alone.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileAexp_correct"><a class="anchor" href="#compileAexp_correct">compileAexp_correct</a></span> {C : Code} {s : Store} (a : aexp) :
+    ∀ {pc pc&#x27; : Int} {stk : Stack}, CodeAt C pc (compileAexp a) →
+    pc&#x27; = pc + codelen (compileAexp a) →
+    transitions C (pc, stk, s) (pc&#x27;, aeval s a :: stk, s) := <span class="k">by</span>
+  <span class="k">induction</span> a <span class="k">with</span>
+  | const n =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">exact</span> .one (.const&#x27; h.head (<span class="k">by</span> simpa [compileAexp] <span class="k">using</span> e))
+  | var x =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">exact</span> .one (.var&#x27; h.head <span class="k">rfl</span> (<span class="k">by</span> simpa [compileAexp] <span class="k">using</span> e))
+  | plus a₁ a₂ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileAexp] <span class="k">at</span> h e
+      <span class="k">have</span> h₃ : instrAt C (pc + codelen (compileAexp a₁) + codelen (compileAexp a₂))
+          = some .add :=
+        (h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head
+      <span class="k">refine</span> (ih₁ h.app_left.app_left <span class="k">rfl</span>).trans
+        ((ih₂ (h.app_left.app_right&#x27; <span class="k">rfl</span>) <span class="k">rfl</span>).trans (.one (.add&#x27; h₃ <span class="k">rfl</span> ?_)))
+      <span class="k">simp</span> only [codelen_app, codelen_cons, codelen_nil] <span class="k">at</span> e; <span class="k">omega</span>
+  | minus a₁ a₂ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileAexp] <span class="k">at</span> h e
+      <span class="k">have</span> h₃ : CodeAt C (pc + codelen (compileAexp a₁) + codelen (compileAexp a₂))
+          [instr.opp, instr.add] := h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)
+      <span class="k">refine</span> (ih₁ h.app_left.app_left <span class="k">rfl</span>).trans
+        ((ih₂ (h.app_left.app_right&#x27; <span class="k">rfl</span>) <span class="k">rfl</span>).trans
+          (.step (.opp&#x27; h₃.head <span class="k">rfl</span> <span class="k">rfl</span>) (.one (.add&#x27; h₃.tail.head ?_ ?_))))
+      · <span class="k">simp</span> only [aeval]; <span class="k">omega</span>
+      · <span class="k">simp</span> only [codelen_app, codelen_cons, codelen_nil] <span class="k">at</span> e; <span class="k">omega</span></pre>
+<div class="doc decl"><p>The code for <code>b</code> leaves the stack and the store unchanged, and branches <code>d₁</code> instructions forward if <code>b</code> is true, <code>d₀</code> if <code>b</code> is false.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileBexp_correct"><a class="anchor" href="#compileBexp_correct">compileBexp_correct</a></span> {C : Code} {s : Store} (b : bexp) :
+    ∀ (d₁ d₀ : Int) {pc pc&#x27; : Int} {stk : Stack}, CodeAt C pc (compileBexp b d₁ d₀) →
+    pc&#x27; = pc + codelen (compileBexp b d₁ d₀) + (<span class="k">if</span> beval s b <span class="k">then</span> d₁ <span class="k">else</span> d₀) →
+    transitions C (pc, stk, s) (pc&#x27;, stk, s) := <span class="k">by</span>
+  <span class="k">induction</span> b <span class="k">with</span>
+  | «true» =&gt;
+      <span class="k">intro</span> d₁ d₀ pc pc&#x27; stk h e
+      by_cases hd : d₁ = 0
+      · <span class="k">subst</span> hd
+        <span class="k">have</span> hpc : pc&#x27; = pc := <span class="k">by</span> <span class="k">simp</span> [compileBexp, beval] <span class="k">at</span> e; <span class="k">omega</span>
+        <span class="k">subst</span> hpc; <span class="k">exact</span> .refl _
+      · <span class="k">simp</span> only [compileBexp, if_neg hd] <span class="k">at</span> h e
+        <span class="k">exact</span> .one (.branch h.head (<span class="k">by</span> <span class="k">simp</span> [beval] <span class="k">at</span> e; <span class="k">omega</span>))
+  | «false» =&gt;
+      <span class="k">intro</span> d₁ d₀ pc pc&#x27; stk h e
+      by_cases hd : d₀ = 0
+      · <span class="k">subst</span> hd
+        <span class="k">have</span> hpc : pc&#x27; = pc := <span class="k">by</span> <span class="k">simp</span> [compileBexp, beval] <span class="k">at</span> e; <span class="k">omega</span>
+        <span class="k">subst</span> hpc; <span class="k">exact</span> .refl _
+      · <span class="k">simp</span> only [compileBexp, if_neg hd] <span class="k">at</span> h e
+        <span class="k">exact</span> .one (.branch h.head (<span class="k">by</span> <span class="k">simp</span> [beval] <span class="k">at</span> e; <span class="k">omega</span>))
+  | equal a₁ a₂ =&gt;
+      <span class="k">intro</span> d₁ d₀ pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileBexp] <span class="k">at</span> h e
+      <span class="k">have</span> h₃ : instrAt C (pc + codelen (compileAexp a₁) + codelen (compileAexp a₂))
+          = some (.beq d₁ d₀) := (h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head
+      <span class="k">refine</span> (compileAexp_correct a₁ h.app_left.app_left <span class="k">rfl</span>).trans
+        ((compileAexp_correct a₂ (h.app_left.app_right&#x27; <span class="k">rfl</span>) <span class="k">rfl</span>).trans (.one (.beq h₃ ?_)))
+      by_cases hq : aeval s a₁ = aeval s a₂ &lt;;&gt;
+        <span class="k">simp</span> only [beval, hq, beq_self_eq_true, if_true, if_false, beq_iff_eq,
+          codelen_app, codelen_cons, codelen_nil] <span class="k">at</span> e ⊢ &lt;;&gt;
+        <span class="k">simp</span> <span class="k">at</span> e ⊢ &lt;;&gt; <span class="k">omega</span>
+  | lessequal a₁ a₂ =&gt;
+      <span class="k">intro</span> d₁ d₀ pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileBexp] <span class="k">at</span> h e
+      <span class="k">have</span> h₃ : instrAt C (pc + codelen (compileAexp a₁) + codelen (compileAexp a₂))
+          = some (.ble d₁ d₀) := (h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head
+      <span class="k">refine</span> (compileAexp_correct a₁ h.app_left.app_left <span class="k">rfl</span>).trans
+        ((compileAexp_correct a₂ (h.app_left.app_right&#x27; <span class="k">rfl</span>) <span class="k">rfl</span>).trans (.one (.ble h₃ ?_)))
+      by_cases hq : aeval s a₁ ≤ aeval s a₂ &lt;;&gt;
+        <span class="k">simp</span> only [beval, hq, decide_true, decide_false, if_true, if_false,
+          codelen_app, codelen_cons, codelen_nil] <span class="k">at</span> e ⊢ &lt;;&gt;
+        <span class="k">simp</span> <span class="k">at</span> e ⊢ &lt;;&gt; <span class="k">omega</span>
+  | not b₁ ih =&gt;
+      <span class="k">intro</span> d₁ d₀ pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileBexp] <span class="k">at</span> h e
+      <span class="k">refine</span> ih d₀ d₁ h ?_
+      <span class="k">cases</span> hb : beval s b₁ &lt;;&gt; <span class="k">simp</span> only [beval, hb] <span class="k">at</span> e ⊢ &lt;;&gt; simpa <span class="k">using</span> e
+  | and b₁ b₂ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> d₁ d₀ pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileBexp] <span class="k">at</span> h e
+      <span class="k">cases</span> hb₁ : beval s b₁
+      · <span class="c">-- `b₁` is false: skip over the code for `b₂`, then take `b`&#x27;s false branch</span>
+        <span class="k">refine</span> ih₁ 0 (codelen (compileBexp b₂ d₁ d₀) + d₀) h.app_left ?_
+        <span class="k">simp</span> only [beval, hb₁, Bool.false_and, Bool.false_eq_true, if_false,
+          codelen_app] <span class="k">at</span> e ⊢
+        <span class="k">omega</span>
+      · <span class="c">-- `b₁` is true: fall through into the code for `b₂`</span>
+        <span class="k">refine</span> (ih₁ 0 (codelen (compileBexp b₂ d₁ d₀) + d₀) h.app_left
+          (pc&#x27; := pc + codelen (compileBexp b₁ 0 (codelen (compileBexp b₂ d₁ d₀) + d₀)))
+          (<span class="k">by</span> <span class="k">simp</span> [hb₁])).trans ?_
+        <span class="k">refine</span> ih₂ d₁ d₀ (h.app_right&#x27; <span class="k">rfl</span>) ?_
+        <span class="k">cases</span> hb₂ : beval s b₂ &lt;;&gt;
+          <span class="k">simp</span> only [beval, hb₁, hb₂, Bool.true_and, Bool.false_eq_true, if_true, if_false,
+            codelen_app] <span class="k">at</span> e ⊢ &lt;;&gt; <span class="k">omega</span></pre>
+<div class="doc decl"><p>If the source command terminates, then the compiled code runs from the start of the generated code to its end, updating the store the same way.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileCom_correct_terminating"><a class="anchor" href="#compileCom_correct_terminating">compileCom_correct_terminating</a></span> {C : Code} {s c s&#x27;} (h : cexec s c s&#x27;) :
+    ∀ {pc pc&#x27; : Int} {stk : Stack}, CodeAt C pc (compileCom c) →
+    pc&#x27; = pc + codelen (compileCom c) →
+    transitions C (pc, stk, s) (pc&#x27;, stk, s&#x27;) := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | skip s =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk _ e
+      <span class="k">simp</span> only [compileCom, codelen_nil] <span class="k">at</span> e
+      <span class="k">have</span> : pc&#x27; = pc := <span class="k">by</span> <span class="k">omega</span>
+      <span class="k">subst</span> <span class="k">this</span>; <span class="k">exact</span> .refl _
+  | assign s x a =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileCom] <span class="k">at</span> h e
+      <span class="k">have</span> h₂ : instrAt C (pc + codelen (compileAexp a)) = some (.setvar x) :=
+        (h.app_right&#x27; <span class="k">rfl</span>).head
+      <span class="k">refine</span> (compileAexp_correct a h.app_left <span class="k">rfl</span>).trans (.one (.setvar&#x27; h₂ <span class="k">rfl</span> ?_))
+      <span class="k">simp</span> only [codelen_app, codelen_cons, codelen_nil] <span class="k">at</span> e; <span class="k">omega</span>
+  | @seq c₁ c₂ s s&#x27; s&#x27;&#x27; _ _ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileCom] <span class="k">at</span> h e
+      <span class="k">exact</span> (ih₁ h.app_left <span class="k">rfl</span>).trans
+        (ih₂ (h.app_right&#x27; <span class="k">rfl</span>) (<span class="k">by</span> <span class="k">simp</span> only [codelen_app] <span class="k">at</span> e; <span class="k">omega</span>))
+  | @ifthenelse b c₁ c₂ s s&#x27; _ ih =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileCom] <span class="k">at</span> h e
+      <span class="k">cases</span> hbv : beval s b
+      · <span class="c">-- the &quot;else&quot; branch is taken: jump over the code for `c₁`</span>
+        <span class="k">simp</span> only [hbv, Bool.false_eq_true, if_false] <span class="k">at</span> ih
+        <span class="k">have</span> hcode₂ : CodeAt C (pc + codelen (compileBexp b 0 (codelen (compileCom c₁) + 1))
+            + codelen (compileCom c₁) + 1) (compileCom c₂) :=
+          (h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).tail&#x27; <span class="k">rfl</span>
+        <span class="k">refine</span> (compileBexp_correct b 0 (codelen (compileCom c₁) + 1)
+          h.app_left.app_left
+          (<span class="k">by</span> <span class="k">simp</span> only [hbv, Bool.false_eq_true, if_false]; <span class="k">omega</span>)).trans (ih hcode₂ ?_)
+        <span class="k">simp</span> only [codelen_app, codelen_cons] <span class="k">at</span> e; <span class="k">omega</span>
+      · <span class="c">-- the &quot;then&quot; branch is taken, then jump over the code for `c₂`</span>
+        <span class="k">simp</span> only [hbv, if_true] <span class="k">at</span> ih
+        <span class="k">have</span> hcode₁ : CodeAt C (pc + codelen (compileBexp b 0 (codelen (compileCom c₁) + 1)))
+            (compileCom c₁) := h.app_left.app_right&#x27; <span class="k">rfl</span>
+        <span class="k">have</span> hbranch : instrAt C (pc + codelen (compileBexp b 0 (codelen (compileCom c₁) + 1))
+            + codelen (compileCom c₁)) = some (.branch (codelen (compileCom c₂))) :=
+          (h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head
+        <span class="k">refine</span> (compileBexp_correct b 0 (codelen (compileCom c₁) + 1)
+          h.app_left.app_left (<span class="k">by</span> <span class="k">simp</span> [hbv])).trans
+          ((ih hcode₁ <span class="k">rfl</span>).trans (.one (.branch hbranch ?_)))
+        <span class="k">simp</span> only [codelen_app, codelen_cons] <span class="k">at</span> e; <span class="k">omega</span>
+  | @while_done b c s hb =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">simp</span> only [compileCom] <span class="k">at</span> h e
+      <span class="k">refine</span> compileBexp_correct b 0 (codelen (compileCom c) + 1) h.app_left.app_left ?_
+      <span class="k">simp</span> only [hb, Bool.false_eq_true, if_false, codelen_app, codelen_cons,
+        codelen_nil] <span class="k">at</span> e ⊢
+      <span class="k">omega</span>
+  | @while_loop b c s s&#x27; s&#x27;&#x27; hb _ _ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> pc pc&#x27; stk h e
+      <span class="k">have</span> hfull := h
+      <span class="k">simp</span> only [compileCom] <span class="k">at</span> h
+      <span class="k">have</span> hcodeBody : CodeAt C (pc + codelen (compileBexp b 0 (codelen (compileCom c) + 1)))
+          (compileCom c) := h.app_left.app_right&#x27; <span class="k">rfl</span>
+      <span class="k">have</span> hbranch : instrAt C (pc + codelen (compileBexp b 0 (codelen (compileCom c) + 1))
+          + codelen (compileCom c))
+          = some (.branch (-(codelen (compileBexp b 0 (codelen (compileCom c) + 1))
+              + codelen (compileCom c) + 1))) :=
+        (h.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head
+      <span class="k">exact</span> (compileBexp_correct b 0 (codelen (compileCom c) + 1)
+        h.app_left.app_left (<span class="k">by</span> <span class="k">simp</span> [hb])).trans
+        ((ih₁ hcodeBody <span class="k">rfl</span>).trans
+          (.step (.branch hbranch (pc&#x27; := pc) (<span class="k">by</span> <span class="k">omega</span>)) (ih₂ hfull e)))</pre>
+<div class="doc decl"><p>Semantic preservation for terminating programs: if the source terminates in <code>s&#x27;</code>, the compiled program halts in <code>s&#x27;</code>.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileProgram_correct_terminating"><a class="anchor" href="#compileProgram_correct_terminating">compileProgram_correct_terminating</a></span> {s c s&#x27;} (h : cexec s c s&#x27;) :
+    machineTerminates (compileProgram c) s s&#x27; := <span class="k">by</span>
+  <span class="k">have</span> hcode : CodeAt (compileProgram c) 0 (compileCom c ++ [instr.halt]) :=
+    ⟨[], [], <span class="k">by</span> <span class="k">simp</span> [compileProgram], <span class="k">by</span> <span class="k">simp</span>⟩
+  <span class="k">exact</span> ⟨0 + codelen (compileCom c),
+    compileCom_correct_terminating h hcode.app_left <span class="k">rfl</span>,
+    (hcode.app_right&#x27; <span class="k">rfl</span>).head⟩</pre>
+<div class="doc"><h3 id="sec-full-correctness-a-simulation-argument">Full correctness: a simulation argument</h3>
+<p>The theorem above says nothing about source programs that loop forever.  To cover those we abandon the big-step semantics and switch to the continuation semantics of IMP, then prove a <em>simulation diagram</em>: every source step is matched by zero, one or several machine transitions.  Divergence then transfers from source to target, because an infinite sequence of source steps produces an infinite sequence of machine transitions.</p>
+<p>First we must say what it means for a machine configuration to <em>match</em> a source configuration <code>(c, k, s)</code>.  Relating <code>c</code> to the code is what <code>CodeAt</code> already does.  What is new is relating the continuation <code>k</code> to the code: when the machine finishes the code for <code>c</code>, the instructions it meets next should carry out the pending computations recorded in <code>k</code> and then halt.</p></div>
+<div class="doc decl"><p><code>compileCont C k pc</code>: starting at <code>pc</code>, the code <code>C</code> performs the pending computations described by <code>k</code> and then reaches a <code>halt</code>.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="compileCont"><a class="anchor" href="#compileCont">compileCont</a></span> (C : Code) : cont → Int → Prop <span class="k">where</span>
+  | stop {pc} : instrAt C pc = some .halt → compileCont C .stop pc
+  | seq {c k pc pc&#x27;} :
+      CodeAt C pc (compileCom c) → pc&#x27; = pc + codelen (compileCom c) →
+      compileCont C k pc&#x27; → compileCont C (.seq c k) pc
+  | «<span class="k">while</span>» {b c k pc d pc&#x27; pc&#x27;&#x27;} :
+      instrAt C pc = some (.branch d) → pc&#x27; = pc + 1 + d →
+      CodeAt C pc&#x27; (compileCom (.<span class="k">while</span> b c)) →
+      pc&#x27;&#x27; = pc&#x27; + codelen (compileCom (.<span class="k">while</span> b c)) →
+      compileCont C k pc&#x27;&#x27; → compileCont C (.<span class="k">while</span> b c k) pc
+<span class="c">  -- A continuation may also be reached through a chain of branches.</span>
+  | branch {d k pc pc&#x27;} :
+      instrAt C pc = some (.branch d) → pc&#x27; = pc + 1 + d →
+      compileCont C k pc&#x27; → compileCont C k pc
+
+<span class="k">theorem</span> <span class="d" id="compileCont_pc"><a class="anchor" href="#compileCont_pc">compileCont_pc</a></span> {C : Code} {k : cont} {pc pc&#x27; : Int}
+    (h : compileCont C k pc) (e : pc&#x27; = pc) : compileCont C k pc&#x27; := <span class="k">by</span> <span class="k">subst</span> e; <span class="k">exact</span> h</pre>
+<div class="doc decl"><p>A source configuration <code>(c, k, s)</code> matches a machine configuration when the stores agree, the machine stack is empty, the code at <code>pc</code> is the code for <code>c</code>, and the code after it carries out <code>k</code>.</p></div>
+<pre class="code"><span class="k">inductive</span> <span class="d" id="matchConfig"><a class="anchor" href="#matchConfig">matchConfig</a></span> (C : Code) : com × cont × Store → Config → Prop <span class="k">where</span>
+  | <span class="k">intro</span> {c k st pc} :
+      CodeAt C pc (compileCom c) →
+      compileCont C k (pc + codelen (compileCom c)) →
+      matchConfig C (c, k, st) (pc, [], st)</pre>
+<div class="doc"><h4 id="sec-the-anti-stuttering-measure">The anti-stuttering measure</h4>
+<p>Some source steps — entering a sequence, testing a loop — correspond to <em>no</em> machine transition at all.  A simulation with such stuttering steps does not by itself transfer divergence: the machine could stutter forever while the source makes progress.  We rule that out with a measure on source configurations that strictly decreases at every stuttering step.  Finding one is a small black art; the sum of the sizes of the command in focus and of the commands recorded in the continuation works.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="comSize"><a class="anchor" href="#comSize">comSize</a></span> : com → Nat
+  | .skip =&gt; 1
+  | .assign _ _ =&gt; 1
+  | .seq c₁ c₂ =&gt; comSize c₁ + comSize c₂ + 1
+  | .ifthenelse _ c₁ c₂ =&gt; comSize c₁ + comSize c₂ + 1
+  | .<span class="k">while</span> _ c₁ =&gt; comSize c₁ + 1
+
+<span class="k">theorem</span> <span class="d" id="comSize_pos"><a class="anchor" href="#comSize_pos">comSize_pos</a></span> (c : com) : 0 &lt; comSize c := <span class="k">by</span>
+  <span class="k">cases</span> c &lt;;&gt; <span class="k">simp</span> [comSize] &lt;;&gt; <span class="k">omega</span>
+
+<span class="k">def</span> <span class="d" id="contSize"><a class="anchor" href="#contSize">contSize</a></span> : cont → Nat
+  | .stop =&gt; 0
+  | .seq c k =&gt; comSize c + contSize k
+  | .<span class="k">while</span> _ _ k =&gt; contSize k
+
+<span class="k">def</span> <span class="d" id="measure"><a class="anchor" href="#measure">measure</a></span> : com × cont × Store → Nat
+  | (c, k, _) =&gt; comSize c + contSize k</pre>
+<div class="doc"><h4 id="sec-inverting-compilecont">Inverting <code>compileCont</code></h4>
+<p>Because of the <code>branch</code> rule, a continuation may sit behind a chain of unconditional jumps.  These three lemmas run down such a chain and expose the instruction the continuation really starts with.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileCont_codeAt_nil"><a class="anchor" href="#compileCont_codeAt_nil">compileCont_codeAt_nil</a></span> {C : Code} {k : cont} {pc : Int}
+    (h : compileCont C k pc) : CodeAt C pc [] := <span class="k">by</span>
+  <span class="k">cases</span> h <span class="k">with</span>
+  | stop hh =&gt; <span class="k">exact</span> instrAt_codeAt_nil hh
+  | seq hc _ _ =&gt; <span class="k">exact</span> hc.nil
+  | «<span class="k">while</span>» hb _ _ _ _ =&gt; <span class="k">exact</span> instrAt_codeAt_nil hb
+  | branch hb _ _ =&gt; <span class="k">exact</span> instrAt_codeAt_nil hb
+
+<span class="k">theorem</span> <span class="d" id="matchConfig_skip"><a class="anchor" href="#matchConfig_skip">matchConfig_skip</a></span> {C : Code} {k : cont} {s : Store} {pc : Int}
+    (h : compileCont C k pc) : matchConfig C (.skip, k, s) (pc, [], s) :=
+  .<span class="k">intro</span> (compileCont_codeAt_nil h) (compileCont_pc h (<span class="k">by</span> <span class="k">simp</span> [compileCom]))
+
+<span class="k">theorem</span> <span class="d" id="compileCont_stop_inv"><a class="anchor" href="#compileCont_stop_inv">compileCont_stop_inv</a></span> {C : Code} {k : cont} {pc : Int} {s : Store}
+    (h : compileCont C k pc) (hk : k = .stop) :
+    ∃ pc&#x27;, transitions C (pc, [], s) (pc&#x27;, [], s) ∧ instrAt C pc&#x27; = some .halt := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | stop hh =&gt; <span class="k">exact</span> ⟨_, .refl _, hh⟩
+  | seq _ _ _ =&gt; <span class="k">cases</span> hk
+  | «<span class="k">while</span>» _ _ _ _ _ =&gt; <span class="k">cases</span> hk
+  | branch hb he _ ih =&gt;
+      <span class="k">obtain</span> ⟨pc&#x27;&#x27;, hstar, hhalt⟩ := ih hk
+      <span class="k">exact</span> ⟨pc&#x27;&#x27;, .step (.branch hb he) hstar, hhalt⟩
+
+<span class="k">theorem</span> <span class="d" id="compileCont_seq_inv"><a class="anchor" href="#compileCont_seq_inv">compileCont_seq_inv</a></span> {C : Code} {k : cont} {pc : Int} {s : Store} {c : com} {k&#x27; : cont}
+    (h : compileCont C k pc) (hk : k = .seq c k&#x27;) :
+    ∃ pc&#x27;, transitions C (pc, [], s) (pc&#x27;, [], s) ∧ CodeAt C pc&#x27; (compileCom c)
+      ∧ compileCont C k&#x27; (pc&#x27; + codelen (compileCom c)) := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | stop _ =&gt; <span class="k">cases</span> hk
+  | seq hc he hcont =&gt;
+      <span class="k">cases</span> hk
+      <span class="k">exact</span> ⟨_, .refl _, hc, compileCont_pc hcont he.symm⟩
+  | «<span class="k">while</span>» _ _ _ _ _ =&gt; <span class="k">cases</span> hk
+  | branch hb he _ ih =&gt;
+      <span class="k">obtain</span> ⟨pc&#x27;&#x27;, hstar, hrest⟩ := ih hk
+      <span class="k">exact</span> ⟨pc&#x27;&#x27;, .step (.branch hb he) hstar, hrest⟩
+
+<span class="k">theorem</span> <span class="d" id="compileCont_while_inv"><a class="anchor" href="#compileCont_while_inv">compileCont_while_inv</a></span> {C : Code} {k : cont} {pc : Int} {s : Store}
+    {b : bexp} {c : com} {k&#x27; : cont}
+    (h : compileCont C k pc) (hk : k = .<span class="k">while</span> b c k&#x27;) :
+    ∃ pc&#x27;, Plus (transition C) (pc, [], s) (pc&#x27;, [], s)
+      ∧ CodeAt C pc&#x27; (compileCom (.<span class="k">while</span> b c))
+      ∧ compileCont C k&#x27; (pc&#x27; + codelen (compileCom (.<span class="k">while</span> b c))) := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | stop _ =&gt; <span class="k">cases</span> hk
+  | seq _ _ _ =&gt; <span class="k">cases</span> hk
+  | «<span class="k">while</span>» hb he hc he&#x27; hcont =&gt;
+      <span class="k">cases</span> hk
+      <span class="k">exact</span> ⟨_, .one (.branch hb he), hc, compileCont_pc hcont he&#x27;.symm⟩
+  | branch hb he _ ih =&gt;
+      <span class="k">obtain</span> ⟨pc&#x27;&#x27;, hplus, hrest⟩ := ih hk
+      <span class="k">exact</span> ⟨pc&#x27;&#x27;, .left (.branch hb he) hplus.star, hrest⟩</pre>
+<div class="doc"><h4 id="sec-the-simulation-diagram">The simulation diagram</h4>
+<p>Each source step is matched either by at least one machine transition, or by zero or more machine transitions together with a strict decrease of the measure.  The second alternative is what allows source steps that generate no code.</p></div>
+<pre class="code"><span class="c">-- The `simp only` calls below list lemmas that are needed on some branches</span>
+<span class="c">-- of the case analysis but not others; the unused-argument linter is off here.</span>
+<span class="k">set_option</span> linter.unusedSimpArgs false <span class="k">in</span>
+<span class="k">theorem</span> <span class="d" id="simulation_step"><a class="anchor" href="#simulation_step">simulation_step</a></span> {C : Code} {ic₁ ic₂ : com × cont × Store} {mc₁ : Config}
+    (hstep : step ic₁ ic₂) (hmatch : matchConfig C ic₁ mc₁) :
+    ∃ mc₂, (Plus (transition C) mc₁ mc₂
+            ∨ (transitions C mc₁ mc₂ ∧ measure ic₂ &lt; measure ic₁))
+      ∧ matchConfig C ic₂ mc₂ := <span class="k">by</span>
+  <span class="k">cases</span> hstep <span class="k">with</span>
+  | assign x a k s =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          rename_i pc
+          <span class="k">simp</span> only [compileCom] <span class="k">at</span> hcode hcont
+          <span class="k">refine</span> ⟨_, .inl (Plus.right (compileAexp_correct a hcode.app_left <span class="k">rfl</span>)
+            (.setvar&#x27; (h := (hcode.app_right&#x27; <span class="k">rfl</span>).head) <span class="k">rfl</span> (pc&#x27; := pc + codelen (compileCom
+              (com.assign x a))) ?_)), matchConfig_skip hcont⟩
+          <span class="k">simp</span> only [compileCom, codelen_app, codelen_cons, codelen_nil]; <span class="k">omega</span>
+  | seq c₁ c₂ s k =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          <span class="k">simp</span> only [compileCom] <span class="k">at</span> hcode hcont
+          <span class="k">refine</span> ⟨_, .inr ⟨.refl _, ?_⟩,
+            .<span class="k">intro</span> hcode.app_left (.seq (hcode.app_right&#x27; <span class="k">rfl</span>) <span class="k">rfl</span>
+              (compileCont_pc hcont (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)))⟩
+          <span class="k">simp</span> only [measure, comSize, contSize]; <span class="k">omega</span>
+  | ifthenelse b c₁ c₂ k s =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          rename_i pc
+          <span class="k">simp</span> only [compileCom] <span class="k">at</span> hcode hcont
+          <span class="k">cases</span> hbv : beval s b
+          · <span class="c">-- the &quot;else&quot; branch: the test jumps over the code for `c₁`</span>
+            <span class="k">refine</span> ⟨_, .inr ⟨compileBexp_correct b 0 (codelen (compileCom c₁) + 1)
+              hcode.app_left.app_left
+              (pc&#x27; := pc + codelen (compileBexp b 0 (codelen (compileCom c₁) + 1))
+                + codelen (compileCom c₁) + 1)
+              (<span class="k">by</span> <span class="k">simp</span> only [hbv, Bool.false_eq_true, if_false]; <span class="k">omega</span>), ?_⟩, ?_⟩
+            · <span class="k">simp</span> only [measure, comSize, contSize, hbv, Bool.false_eq_true, if_false]
+              <span class="k">have</span> := comSize_pos c₁; <span class="k">omega</span>
+            · <span class="k">simp</span> only [hbv, Bool.false_eq_true, if_false]
+              <span class="k">exact</span> .<span class="k">intro</span> ((hcode.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).tail&#x27; <span class="k">rfl</span>)
+                (compileCont_pc hcont (<span class="k">by</span> <span class="k">simp</span> only [codelen_app, codelen_cons]; <span class="k">omega</span>))
+          · <span class="c">-- the &quot;then&quot; branch: fall through into the code for `c₁`</span>
+            <span class="k">refine</span> ⟨_, .inr ⟨compileBexp_correct b 0 (codelen (compileCom c₁) + 1)
+              hcode.app_left.app_left
+              (pc&#x27; := pc + codelen (compileBexp b 0 (codelen (compileCom c₁) + 1)))
+              (<span class="k">by</span> <span class="k">simp</span> [hbv]), ?_⟩, ?_⟩
+            · <span class="k">simp</span> only [measure, comSize, contSize, hbv, if_true]
+              <span class="k">have</span> := comSize_pos c₂; <span class="k">omega</span>
+            · <span class="k">simp</span> only [hbv, if_true]
+              <span class="k">refine</span> .<span class="k">intro</span> (hcode.app_left.app_right&#x27; <span class="k">rfl</span>) ?_
+              <span class="c">-- the code for `c₁` is followed by a jump over the code for `c₂`</span>
+              <span class="k">exact</span> .branch (d := codelen (compileCom c₂))
+                (hcode.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head <span class="k">rfl</span>
+                (compileCont_pc hcont (<span class="k">by</span> <span class="k">simp</span> only [codelen_app, codelen_cons]; <span class="k">omega</span>))
+  | @while_done b c k s hb =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          rename_i pc
+          <span class="k">simp</span> only [compileCom] <span class="k">at</span> hcode hcont
+          <span class="k">refine</span> ⟨_, .inr ⟨compileBexp_correct b 0 (codelen (compileCom c) + 1)
+            hcode.app_left.app_left
+            (pc&#x27; := pc + codelen (compileCom (com.while b c)))
+            (<span class="k">by</span> <span class="k">simp</span> only [hb, Bool.false_eq_true, if_false, compileCom, codelen_app,
+              codelen_cons, codelen_nil]; <span class="k">omega</span>), ?_⟩,
+            matchConfig_skip hcont⟩
+          <span class="k">simp</span> only [measure, comSize, contSize]
+          <span class="k">have</span> := comSize_pos c; <span class="k">omega</span>
+  | @while_true b c k s hb =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          rename_i pc
+          <span class="k">have</span> hfull := hcode
+          <span class="k">simp</span> only [compileCom] <span class="k">at</span> hcode hcont
+          <span class="k">refine</span> ⟨_, .inr ⟨compileBexp_correct b 0 (codelen (compileCom c) + 1)
+            hcode.app_left.app_left
+            (pc&#x27; := pc + codelen (compileBexp b 0 (codelen (compileCom c) + 1)))
+            (<span class="k">by</span> <span class="k">simp</span> [hb]), ?_⟩, ?_⟩
+          · <span class="k">simp</span> only [measure, comSize, contSize]; <span class="k">omega</span>
+          · <span class="k">refine</span> .<span class="k">intro</span> (hcode.app_left.app_right&#x27; <span class="k">rfl</span>) ?_
+            <span class="c">-- after the loop body comes the jump back to the top of the loop</span>
+            <span class="k">exact</span> .«<span class="k">while</span>» (d := -(codelen (compileBexp b 0 (codelen (compileCom c) + 1))
+                + codelen (compileCom c) + 1))
+              (hcode.app_right&#x27; (<span class="k">by</span> <span class="k">simp</span> only [codelen_app]; <span class="k">omega</span>)).head (<span class="k">by</span> <span class="k">omega</span>)
+              hfull <span class="k">rfl</span> hcont
+  | skip_seq c k s =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          rename_i pc
+          <span class="k">obtain</span> ⟨pc&#x27;, hstar, hcode&#x27;, hcont&#x27;⟩ :=
+            compileCont_seq_inv (s := s) hcont <span class="k">rfl</span>
+          <span class="k">refine</span> ⟨_, .inr ⟨?_, ?_⟩, .<span class="k">intro</span> hcode&#x27; hcont&#x27;⟩
+          · simpa [compileCom] <span class="k">using</span> hstar
+          · <span class="k">simp</span> only [measure, comSize, contSize]
+            <span class="k">have</span> := comSize_pos c; <span class="k">omega</span>
+  | skip_while b c k s =&gt;
+      <span class="k">cases</span> hmatch <span class="k">with</span>
+      | <span class="k">intro</span> hcode hcont =&gt;
+          <span class="k">obtain</span> ⟨pc&#x27;, hplus, hcode&#x27;, hcont&#x27;⟩ :=
+            compileCont_while_inv (s := s) hcont <span class="k">rfl</span>
+          <span class="k">exact</span> ⟨_, .inl (<span class="k">by</span> simpa [compileCom] <span class="k">using</span> hplus), .<span class="k">intro</span> hcode&#x27; hcont&#x27;⟩</pre>
+<div class="doc decl"><p>Lifting the simulation from one step to a finite sequence of steps.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="simulation_steps"><a class="anchor" href="#simulation_steps">simulation_steps</a></span> {C : Code} {ic₁ ic₂ : com × cont × Store}
+    (h : Star step ic₁ ic₂) : ∀ {mc₁ : Config}, matchConfig C ic₁ mc₁ →
+    ∃ mc₂, transitions C mc₁ mc₂ ∧ matchConfig C ic₂ mc₂ := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | refl a =&gt; <span class="k">exact</span> <span class="k">fun</span> hm =&gt; ⟨_, .refl _, hm⟩
+  | step hstep _ ih =&gt;
+      <span class="k">intro</span> mc₁ hm
+      <span class="k">obtain</span> ⟨mc₂, hsteps, hm₂⟩ := simulation_step hstep hm
+      <span class="k">obtain</span> ⟨mc₃, hsteps₃, hm₃⟩ := ih hm₂
+      <span class="k">refine</span> ⟨mc₃, ?_, hm₃⟩
+      <span class="k">rcases</span> hsteps <span class="k">with</span> hplus | ⟨hstar, _⟩
+      · <span class="k">exact</span> hplus.star.trans hsteps₃
+      · <span class="k">exact</span> hstar.trans hsteps₃
+
+<span class="k">theorem</span> <span class="d" id="matchInitialConfigs"><a class="anchor" href="#matchInitialConfigs">matchInitialConfigs</a></span> (c : com) (s : Store) :
+    matchConfig (compileProgram c) (c, .stop, s) (0, [], s) := <span class="k">by</span>
+  <span class="k">have</span> hcode : CodeAt (compileProgram c) 0 (compileCom c ++ [instr.halt]) :=
+    ⟨[], [], <span class="k">by</span> <span class="k">simp</span> [compileProgram], <span class="k">by</span> <span class="k">simp</span>⟩
+  <span class="k">exact</span> .<span class="k">intro</span> hcode.app_left (.stop (hcode.app_right&#x27; <span class="k">rfl</span>).head)</pre>
+<div class="doc decl"><p>The terminating case again, this time from the continuation semantics.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileProgram_correct_terminating_2"><a class="anchor" href="#compileProgram_correct_terminating_2">compileProgram_correct_terminating_2</a></span> {c : com} {s s&#x27; : Store}
+    (h : Star step (c, .stop, s) (.skip, .stop, s&#x27;)) :
+    machineTerminates (compileProgram c) s s&#x27; := <span class="k">by</span>
+  <span class="k">obtain</span> ⟨mc, hsteps, hm⟩ := simulation_steps h (matchInitialConfigs c s)
+  <span class="k">cases</span> hm <span class="k">with</span>
+  | <span class="k">intro</span> hcode hcont =&gt;
+      <span class="k">obtain</span> ⟨pc&#x27;, hstar, hhalt⟩ := compileCont_stop_inv (s := s&#x27;) hcont <span class="k">rfl</span>
+      <span class="k">exact</span> ⟨pc&#x27;, hsteps.trans (<span class="k">by</span> simpa [compileCom] <span class="k">using</span> hstar), hhalt⟩</pre>
+<div class="doc decl"><p>The key step for divergence: from a diverging source configuration, the machine can always make <em>at least one</em> transition and land in a configuration that again matches a diverging source configuration.  The bound <code>n</code> on the measure is what makes this an ordinary induction: consecutive stuttering steps must run out.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="simulation_infseq_inv"><a class="anchor" href="#simulation_infseq_inv">simulation_infseq_inv</a></span> {C : Code} :
+    ∀ (n : Nat) {ic₁ : com × cont × Store} {mc₁ : Config},
+    Infseq step ic₁ → matchConfig C ic₁ mc₁ → measure ic₁ &lt; n →
+    ∃ ic₂ mc₂, Infseq step ic₂ ∧ Plus (transition C) mc₁ mc₂ ∧ matchConfig C ic₂ mc₂ := <span class="k">by</span>
+  <span class="k">intro</span> n
+  <span class="k">induction</span> n <span class="k">with</span>
+  | zero =&gt; <span class="k">intro</span> ic₁ mc₁ _ _ hm; <span class="k">omega</span>
+  | succ n ih =&gt;
+      <span class="k">intro</span> ic₁ mc₁ hinf hmatch hmeas
+      <span class="k">obtain</span> ⟨ic&#x27;, hstep, hinf&#x27;⟩ := hinf.inv
+      <span class="k">obtain</span> ⟨mc₂, hcase, hmatch₂⟩ := simulation_step hstep hmatch
+      <span class="k">rcases</span> hcase <span class="k">with</span> hplus | ⟨hstar, hless⟩
+      · <span class="k">exact</span> ⟨ic&#x27;, mc₂, hinf&#x27;, hplus, hmatch₂⟩
+      · <span class="k">obtain</span> ⟨ic₃, mc₃, hinf₃, hplus₃, hmatch₃⟩ := ih hinf&#x27; hmatch₂ (<span class="k">by</span> <span class="k">omega</span>)
+        <span class="k">exact</span> ⟨ic₃, mc₃, hinf₃, hstar.plusTrans hplus₃, hmatch₃⟩</pre>
+<div class="doc decl"><p>Semantic preservation for diverging programs: if the source makes infinitely many steps, so does the compiled code.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="compileProgram_correct_diverging"><a class="anchor" href="#compileProgram_correct_diverging">compileProgram_correct_diverging</a></span> {c : com} {s : Store}
+    (h : Infseq step (c, .stop, s)) : machineDiverges (compileProgram c) s := <span class="k">by</span>
+  <span class="k">refine</span> Infseq.coinduction_plus
+    (X := <span class="k">fun</span> mc =&gt; ∃ ic, Infseq step ic ∧ matchConfig (compileProgram c) ic mc) ?_
+    ⟨(c, .stop, s), h, matchInitialConfigs c s⟩
+  <span class="k">rintro</span> mc ⟨ic, hinf, hmatch⟩
+  <span class="k">obtain</span> ⟨ic₂, mc₂, hinf₂, hplus, hmatch₂⟩ :=
+    simulation_infseq_inv (measure ic + 1) hinf hmatch (<span class="k">by</span> <span class="k">omega</span>)
+  <span class="k">exact</span> ⟨mc₂, hplus, ic₂, hinf₂, hmatch₂⟩
+
+<span class="k">end</span> Compil</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>CompilerVerification/Compil.lean</code>.
+</div>
+</body>
+</html>

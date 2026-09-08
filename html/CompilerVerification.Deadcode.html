@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CompilerVerification.Deadcode</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.Constprop.html">&larr; CompilerVerification.Constprop</a> &nbsp; <a href="CompilerVerification.Fixpoints.html">CompilerVerification.Fixpoints &rarr;</a></span>
+</div>
+<h1 class="modname">CompilerVerification.Deadcode</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-liveness-analysis-and-dead-code-elimination">Liveness analysis and dead code elimination</a></li><li class="l2"><a href="#sec-sets-of-variables">Sets of variables</a></li><li class="l2"><a href="#sec-free-variables">Free variables</a></li><li class="l2"><a href="#sec-fixpoints-over-sets-of-variables">Fixpoints over sets of variables</a></li><li class="l2"><a href="#sec-the-analysis">The analysis</a></li><li class="l2"><a href="#sec-the-optimisation">The optimisation</a></li><li class="l2"><a href="#sec-correctness">Correctness</a></li></ul></div>
+<div class="content">
+<div class="license">  Liveness analysis and dead code elimination.<br><br>  Lean 4 port of `Deadcode.v` from the Coq development accompanying<br>  Xavier Leroy, *Proving the correctness of a compiler*,<br>  EUTypes 2019 Summer School.<br><br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the definitions and theorem statements follow<br>  the Coq originals, but all proofs and explanatory text have been rewritten<br>  for Lean 4.  Coq&#x27;s `FSets` library has no counterpart in Lean&#x27;s core<br>  library, so sets of variables are implemented here as lists.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.</div>
+<pre class="code"><span class="k">import</span> CompilerVerification.IMP</pre>
+<div class="doc"><h2 id="sec-liveness-analysis-and-dead-code-elimination">Liveness analysis and dead code elimination</h2>
+<p>A variable is <em>live</em> at a program point if some later instruction may read it before it is overwritten.  An assignment to a variable that is not live is dead: its value is never observed, so the assignment can be deleted.</p>
+<p>Liveness is a <em>backward</em> dataflow analysis — <code>live c L</code> computes the variables live before <code>c</code>, given the set <code>L</code> of variables live after it.  Contrast this with constant propagation, which runs forwards.  Loops again require a fixpoint, computed here with the same fuel-bounded iteration.</p>
+<p>Sets of variables are represented as lists.  Duplicates are harmless: every statement below is about membership, never about the representation.</p></div>
+<pre class="code"><span class="k">namespace</span> Deadcode
+
+<span class="k">open</span> IMP</pre>
+<div class="doc"><h3 id="sec-sets-of-variables">Sets of variables</h3></div>
+<pre class="code"><span class="k">abbrev</span> <span class="d" id="IdentSet"><a class="anchor" href="#IdentSet">IdentSet</a></span> := List Ident
+
+<span class="k">namespace</span> IdentSet
+
+<span class="k">def</span> <span class="d" id="remove"><a class="anchor" href="#remove">remove</a></span> (x : Ident) (L : IdentSet) : IdentSet := L.filter (<span class="k">fun</span> y =&gt; !(y == x))
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="mem_remove"><a class="anchor" href="#mem_remove">mem_remove</a></span> {x y : Ident} {L : IdentSet} :
+    x ∈ remove y L ↔ x ∈ L ∧ x ≠ y := <span class="k">by</span>
+  <span class="k">simp</span> [remove, List.mem_filter]</pre>
+<div class="doc decl"><p><code>Incl L₁ L₂</code>: every variable of <code>L₁</code> is a variable of <code>L₂</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="Incl"><a class="anchor" href="#Incl">Incl</a></span> (L₁ L₂ : IdentSet) : Prop := ∀ x, x ∈ L₁ → x ∈ L₂
+
+<span class="k">theorem</span> <span class="d" id="Incl.refl"><a class="anchor" href="#Incl.refl">Incl.refl</a></span> (L : IdentSet) : Incl L L := <span class="k">fun</span> _ h =&gt; h
+
+<span class="k">theorem</span> <span class="d" id="Incl.trans"><a class="anchor" href="#Incl.trans">Incl.trans</a></span> {L₁ L₂ L₃ : IdentSet} (h₁ : Incl L₁ L₂) (h₂ : Incl L₂ L₃) :
+    Incl L₁ L₃ := <span class="k">fun</span> x hx =&gt; h₂ x (h₁ x hx)</pre>
+<div class="doc decl"><p>A decidable inclusion test, used to detect that the fixpoint iteration has stabilised.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="inclb"><a class="anchor" href="#inclb">inclb</a></span> (L₁ L₂ : IdentSet) : Bool := L₁.all (<span class="k">fun</span> x =&gt; L₂.contains x)
+
+<span class="k">theorem</span> <span class="d" id="inclb_sound"><a class="anchor" href="#inclb_sound">inclb_sound</a></span> {L₁ L₂ : IdentSet} (h : inclb L₁ L₂ = true) : Incl L₁ L₂ := <span class="k">by</span>
+  <span class="k">intro</span> x hx
+  <span class="k">simp</span> only [inclb, List.all_eq_true] <span class="k">at</span> h
+  simpa <span class="k">using</span> h x hx
+
+<span class="k">end</span> IdentSet
+
+<span class="k">open</span> IdentSet</pre>
+<div class="doc"><h3 id="sec-free-variables">Free variables</h3></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="fvAexp"><a class="anchor" href="#fvAexp">fvAexp</a></span> : aexp → IdentSet
+  | .const _ =&gt; []
+  | .var x =&gt; [x]
+  | .plus a₁ a₂ =&gt; fvAexp a₁ ++ fvAexp a₂
+  | .minus a₁ a₂ =&gt; fvAexp a₁ ++ fvAexp a₂
+
+<span class="k">def</span> <span class="d" id="fvBexp"><a class="anchor" href="#fvBexp">fvBexp</a></span> : bexp → IdentSet
+  | .true =&gt; []
+  | .false =&gt; []
+  | .equal a₁ a₂ =&gt; fvAexp a₁ ++ fvAexp a₂
+  | .lessequal a₁ a₂ =&gt; fvAexp a₁ ++ fvAexp a₂
+  | .not b₁ =&gt; fvBexp b₁
+  | .and b₁ b₂ =&gt; fvBexp b₁ ++ fvBexp b₂
+
+<span class="k">def</span> <span class="d" id="fvCom"><a class="anchor" href="#fvCom">fvCom</a></span> : com → IdentSet
+  | .skip =&gt; []
+  | .assign _ a =&gt; fvAexp a
+  | .seq c₁ c₂ =&gt; fvCom c₁ ++ fvCom c₂
+  | .ifthenelse b c₁ c₂ =&gt; fvBexp b ++ (fvCom c₁ ++ fvCom c₂)
+  | .<span class="k">while</span> b c =&gt; fvBexp b ++ fvCom c</pre>
+<div class="doc"><h3 id="sec-fixpoints-over-sets-of-variables">Fixpoints over sets of variables</h3>
+<p>The same engineer&#x27;s fixpoint as in <code>Constprop.lean</code>: iterate at most twenty times, and fall back on a <code>default</code> set — one that is certainly big enough — if no fixpoint has appeared.  Falling back loses precision, never soundness.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="fixpointRec"><a class="anchor" href="#fixpointRec">fixpointRec</a></span> (F : IdentSet → IdentSet) (default : IdentSet) :
+    Nat → IdentSet → IdentSet
+  | 0, _ =&gt; default
+  | fuel + 1, x =&gt; <span class="k">if</span> inclb (F x) x <span class="k">then</span> x <span class="k">else</span> fixpointRec F default fuel (F x)
+
+<span class="k">def</span> <span class="d" id="fixpoint"><a class="anchor" href="#fixpoint">fixpoint</a></span> (F : IdentSet → IdentSet) (default : IdentSet) : IdentSet :=
+  fixpointRec F default 20 []</pre>
+<div class="doc decl"><p>Either the result really is a post-fixpoint, or it is the fallback.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="fixpoint_charact"><a class="anchor" href="#fixpoint_charact">fixpoint_charact</a></span> (F : IdentSet → IdentSet) (default : IdentSet) :
+    Incl (F (fixpoint F default)) (fixpoint F default) ∨ fixpoint F default = default := <span class="k">by</span>
+  <span class="k">have</span> key : ∀ (n : Nat) (x : IdentSet),
+      Incl (F (fixpointRec F default n x)) (fixpointRec F default n x)
+      ∨ fixpointRec F default n x = default := <span class="k">by</span>
+    <span class="k">intro</span> n
+    <span class="k">induction</span> n <span class="k">with</span>
+    | zero =&gt; <span class="k">intro</span> x; <span class="k">exact</span> .inr <span class="k">rfl</span>
+    | succ n ih =&gt;
+        <span class="k">intro</span> x
+        by_cases h : inclb (F x) x = true
+        · <span class="k">simp</span> only [fixpointRec, if_pos h]; <span class="k">exact</span> .inl (inclb_sound h)
+        · <span class="k">simp</span> only [fixpointRec, if_neg h]; <span class="k">exact</span> ih (F x)
+  <span class="k">exact</span> key 20 []</pre>
+<div class="doc decl"><p>If <code>default</code> is stable under <code>F</code>, the fixpoint stays inside it.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="fixpoint_upper_bound"><a class="anchor" href="#fixpoint_upper_bound">fixpoint_upper_bound</a></span> {F : IdentSet → IdentSet} {default : IdentSet}
+    (hF : ∀ x, Incl x default → Incl (F x) default) :
+    Incl (fixpoint F default) default := <span class="k">by</span>
+  <span class="k">have</span> key : ∀ (n : Nat) (x : IdentSet), Incl x default →
+      Incl (fixpointRec F default n x) default := <span class="k">by</span>
+    <span class="k">intro</span> n
+    <span class="k">induction</span> n <span class="k">with</span>
+    | zero =&gt; <span class="k">intro</span> x _; <span class="k">exact</span> Incl.refl _
+    | succ n ih =&gt;
+        <span class="k">intro</span> x hx
+        by_cases h : inclb (F x) x = true
+        · <span class="k">simp</span> only [fixpointRec, if_pos h]; <span class="k">exact</span> hx
+        · <span class="k">simp</span> only [fixpointRec, if_neg h]; <span class="k">exact</span> ih (F x) (hF x hx)
+  <span class="k">exact</span> key 20 [] (<span class="k">by</span> <span class="k">intro</span> x hx; <span class="k">simp</span> <span class="k">at</span> hx)</pre>
+<div class="doc"><h3 id="sec-the-analysis">The analysis</h3>
+<p><code>live c L</code> is the set of variables live <em>before</em> <code>c</code>, given that <code>L</code> are the variables live <em>after</em> it.  The interesting case is assignment: if <code>x</code> is live afterwards, then the assignment is useful, <code>x</code> itself is no longer live before it, and everything <code>a</code> reads becomes live; if <code>x</code> is dead afterwards, the assignment changes nothing.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="live"><a class="anchor" href="#live">live</a></span> (c : com) (L : IdentSet) : IdentSet :=
+  <span class="k">match</span> c <span class="k">with</span>
+  | .skip =&gt; L
+  | .assign x a =&gt; <span class="k">if</span> x ∈ L <span class="k">then</span> remove x L ++ fvAexp a <span class="k">else</span> L
+  | .seq c₁ c₂ =&gt; live c₁ (live c₂ L)
+  | .ifthenelse b c₁ c₂ =&gt; fvBexp b ++ (live c₁ L ++ live c₂ L)
+  | .<span class="k">while</span> b c =&gt;
+      fixpoint (<span class="k">fun</span> x =&gt; (fvBexp b ++ L) ++ live c x) (fvCom (.<span class="k">while</span> b c) ++ L)
+  <span class="k">termination_by</span> c
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="live_skip"><a class="anchor" href="#live_skip">live_skip</a></span> (L : IdentSet) : live .skip L = L := <span class="k">by</span> rw [live]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="live_assign"><a class="anchor" href="#live_assign">live_assign</a></span> (x : Ident) (a : aexp) (L : IdentSet) :
+    live (.assign x a) L = <span class="k">if</span> x ∈ L <span class="k">then</span> remove x L ++ fvAexp a <span class="k">else</span> L := <span class="k">by</span> rw [live]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="live_seq"><a class="anchor" href="#live_seq">live_seq</a></span> (c₁ c₂ : com) (L : IdentSet) :
+    live (c₁ ;; c₂) L = live c₁ (live c₂ L) := <span class="k">by</span> rw [live]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="live_ifthenelse"><a class="anchor" href="#live_ifthenelse">live_ifthenelse</a></span> (b : bexp) (c₁ c₂ : com) (L : IdentSet) :
+    live (.ifthenelse b c₁ c₂) L = fvBexp b ++ (live c₁ L ++ live c₂ L) := <span class="k">by</span> rw [live]
+
+<span class="k">theorem</span> <span class="d" id="live_while"><a class="anchor" href="#live_while">live_while</a></span> (b : bexp) (c : com) (L : IdentSet) :
+    live (.<span class="k">while</span> b c) L
+      = fixpoint (<span class="k">fun</span> x =&gt; (fvBexp b ++ L) ++ live c x) (fvCom (.<span class="k">while</span> b c) ++ L) := <span class="k">by</span>
+  rw [live]
+
+<span class="k">theorem</span> <span class="d" id="live_upper_bound"><a class="anchor" href="#live_upper_bound">live_upper_bound</a></span> : ∀ (c : com) (L : IdentSet),
+    Incl (live c L) (fvCom c ++ L)
+  | .skip, L =&gt; <span class="k">by</span> <span class="k">intro</span> x hx; simpa [fvCom] <span class="k">using</span> hx
+  | .assign y a, L =&gt; <span class="k">by</span>
+      <span class="k">intro</span> x hx
+      <span class="k">simp</span> only [live_assign] <span class="k">at</span> hx
+      by_cases hy : y ∈ L &lt;;&gt; simp_all [fvCom] &lt;;&gt; <span class="k">grind</span>
+  | .seq c₁ c₂, L =&gt; <span class="k">by</span>
+      <span class="k">intro</span> x hx
+      <span class="k">simp</span> only [live_seq] <span class="k">at</span> hx
+      <span class="k">have</span> h₁ := live_upper_bound c₁ (live c₂ L) x hx
+      <span class="k">have</span> h₂ := <span class="k">fun</span> h =&gt; live_upper_bound c₂ L x h
+      <span class="k">simp</span> only [fvCom, List.mem_append] <span class="k">at</span> h₁ h₂ ⊢
+      <span class="k">grind</span>
+  | .ifthenelse b c₁ c₂, L =&gt; <span class="k">by</span>
+      <span class="k">intro</span> x hx
+      <span class="k">have</span> h₁ := <span class="k">fun</span> h =&gt; live_upper_bound c₁ L x h
+      <span class="k">have</span> h₂ := <span class="k">fun</span> h =&gt; live_upper_bound c₂ L x h
+      <span class="k">simp</span> only [live_ifthenelse, fvCom, List.mem_append] <span class="k">at</span> hx h₁ h₂ ⊢
+      <span class="k">grind</span>
+  | .<span class="k">while</span> b c, L =&gt; <span class="k">by</span>
+      rw [live_while]
+      <span class="k">refine</span> fixpoint_upper_bound ?_
+      <span class="k">intro</span> y hy z hz
+      <span class="k">have</span> h := <span class="k">fun</span> h =&gt; live_upper_bound c y z h
+      <span class="k">have</span> hy&#x27; := <span class="k">fun</span> h =&gt; hy z h
+      <span class="k">simp</span> only [fvCom, List.mem_append] <span class="k">at</span> hz h hy&#x27; ⊢
+      <span class="k">grind</span></pre>
+<div class="doc decl"><p>The three properties of the loop&#x27;s fixpoint that the correctness proof uses: the test&#x27;s variables are live before the loop, the variables live after it are live before it, and one more pass round the body adds nothing.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="live_while_charact"><a class="anchor" href="#live_while_charact">live_while_charact</a></span> (b : bexp) (c : com) (L : IdentSet) :
+    Incl (fvBexp b) (live (.<span class="k">while</span> b c) L)
+    ∧ Incl L (live (.<span class="k">while</span> b c) L)
+    ∧ Incl (live c (live (.<span class="k">while</span> b c) L)) (live (.<span class="k">while</span> b c) L) := <span class="k">by</span>
+  <span class="k">have</span> hc := fixpoint_charact (<span class="k">fun</span> x =&gt; (fvBexp b ++ L) ++ live c x)
+    (fvCom (.<span class="k">while</span> b c) ++ L)
+  rw [live_while]
+  <span class="k">rcases</span> hc <span class="k">with</span> hc | hc
+  · <span class="k">exact</span> ⟨<span class="k">fun</span> x hx =&gt; hc x (List.mem_append.mpr (.inl (List.mem_append.mpr (.inl hx)))),
+      <span class="k">fun</span> x hx =&gt; hc x (List.mem_append.mpr (.inl (List.mem_append.mpr (.inr hx)))),
+      <span class="k">fun</span> x hx =&gt; hc x (List.mem_append.mpr (.inr hx))⟩
+  · rw [hc]
+    <span class="k">refine</span> ⟨<span class="k">fun</span> x hx =&gt; <span class="k">by</span> <span class="k">simp</span> [fvCom, hx], <span class="k">fun</span> x hx =&gt; <span class="k">by</span> <span class="k">simp</span> [hx], ?_⟩
+    <span class="k">intro</span> x hx
+    <span class="k">have</span> := live_upper_bound c (fvCom (.<span class="k">while</span> b c) ++ L) x hx
+    <span class="k">simp</span> only [fvCom, List.mem_append] <span class="k">at</span> <span class="k">this</span> ⊢
+    <span class="k">grind</span></pre>
+<div class="doc"><h3 id="sec-the-optimisation">The optimisation</h3>
+<p>Dead code elimination replaces an assignment to a dead variable by <code>skip</code>.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="dce"><a class="anchor" href="#dce">dce</a></span> (c : com) (L : IdentSet) : com :=
+  <span class="k">match</span> c <span class="k">with</span>
+  | .skip =&gt; .skip
+  | .assign x a =&gt; <span class="k">if</span> x ∈ L <span class="k">then</span> .assign x a <span class="k">else</span> .skip
+  | .seq c₁ c₂ =&gt; .seq (dce c₁ (live c₂ L)) (dce c₂ L)
+  | .ifthenelse b c₁ c₂ =&gt; .ifthenelse b (dce c₁ L) (dce c₂ L)
+  | .<span class="k">while</span> b c =&gt; .<span class="k">while</span> b (dce c (live (.<span class="k">while</span> b c) L))
+  <span class="k">termination_by</span> c
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="dce_skip"><a class="anchor" href="#dce_skip">dce_skip</a></span> (L : IdentSet) : dce .skip L = .skip := <span class="k">by</span> rw [dce]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="dce_assign"><a class="anchor" href="#dce_assign">dce_assign</a></span> (x : Ident) (a : aexp) (L : IdentSet) :
+    dce (.assign x a) L = <span class="k">if</span> x ∈ L <span class="k">then</span> .assign x a <span class="k">else</span> .skip := <span class="k">by</span> rw [dce]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="dce_seq"><a class="anchor" href="#dce_seq">dce_seq</a></span> (c₁ c₂ : com) (L : IdentSet) :
+    dce (c₁ ;; c₂) L = (dce c₁ (live c₂ L) ;; dce c₂ L) := <span class="k">by</span> rw [dce]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="dce_ifthenelse"><a class="anchor" href="#dce_ifthenelse">dce_ifthenelse</a></span> (b : bexp) (c₁ c₂ : com) (L : IdentSet) :
+    dce (.ifthenelse b c₁ c₂) L = .ifthenelse b (dce c₁ L) (dce c₂ L) := <span class="k">by</span> rw [dce]
+
+@[<span class="k">simp</span>] <span class="k">theorem</span> <span class="d" id="dce_while"><a class="anchor" href="#dce_while">dce_while</a></span> (b : bexp) (c : com) (L : IdentSet) :
+    dce (.<span class="k">while</span> b c) L = .<span class="k">while</span> b (dce c (live (.<span class="k">while</span> b c) L)) := <span class="k">by</span> rw [dce]</pre>
+<div class="doc decl"><p>If only <code>&quot;r&quot;</code> matters at the end, the updates of <code>&quot;q&quot;</code> are dead.</p></div>
+<pre class="code"><span class="k">example</span> : <span class="d" id="dce"><a class="anchor" href="#dce">dce</a></span> euclideanDivision [<span class="s">&quot;r&quot;</span>]
+    = (.assign <span class="s">&quot;r&quot;</span> (.var <span class="s">&quot;a&quot;</span>) ;; .skip ;;
+       .<span class="k">while</span> (.lessequal (.var <span class="s">&quot;b&quot;</span>) (.var <span class="s">&quot;r&quot;</span>))
+         (.assign <span class="s">&quot;r&quot;</span> (.minus (.var <span class="s">&quot;r&quot;</span>) (.var <span class="s">&quot;b&quot;</span>)) ;; .skip)) := <span class="k">by</span>
+  native_decide</pre>
+<div class="doc decl"><p>If <code>&quot;q&quot;</code> matters, nothing can be removed.</p></div>
+<pre class="code"><span class="k">example</span> : <span class="d" id="dce"><a class="anchor" href="#dce">dce</a></span> euclideanDivision [<span class="s">&quot;q&quot;</span>] = euclideanDivision := <span class="k">by</span> native_decide</pre>
+<div class="doc"><h3 id="sec-correctness">Correctness</h3>
+<p>Two stores <em>agree</em> on a set of variables when they give those variables the same values.  The optimised program runs in a store that may differ from the original one on dead variables — that is the whole point — so the invariant relating the two executions is agreement on the live variables.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="agree"><a class="anchor" href="#agree">agree</a></span> (L : IdentSet) (s₁ s₂ : Store) : Prop := ∀ x, x ∈ L → s₁ x = s₂ x
+
+<span class="k">theorem</span> <span class="d" id="agree.mono"><a class="anchor" href="#agree.mono">agree.mono</a></span> {L L&#x27; : IdentSet} {s₁ s₂ : Store} (h : agree L&#x27; s₁ s₂)
+    (hsub : Incl L L&#x27;) : agree L s₁ s₂ := <span class="k">fun</span> x hx =&gt; h x (hsub x hx)
+
+<span class="k">theorem</span> <span class="d" id="aeval_agree"><a class="anchor" href="#aeval_agree">aeval_agree</a></span> {L : IdentSet} {s₁ s₂ : Store} (h : agree L s₁ s₂) :
+    ∀ (a : aexp), Incl (fvAexp a) L → aeval s₁ a = aeval s₂ a
+  | .const _, _ =&gt; <span class="k">rfl</span>
+  | .var x, hsub =&gt; h x (hsub x (<span class="k">by</span> <span class="k">simp</span> [fvAexp]))
+  | .plus a₁ a₂, hsub =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [aeval, aeval_agree h a₁ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvAexp, hx])),
+        aeval_agree h a₂ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvAexp, hx]))]
+  | .minus a₁ a₂, hsub =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [aeval, aeval_agree h a₁ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvAexp, hx])),
+        aeval_agree h a₂ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvAexp, hx]))]
+
+<span class="k">theorem</span> <span class="d" id="beval_agree"><a class="anchor" href="#beval_agree">beval_agree</a></span> {L : IdentSet} {s₁ s₂ : Store} (h : agree L s₁ s₂) :
+    ∀ (b : bexp), Incl (fvBexp b) L → beval s₁ b = beval s₂ b
+  | .true, _ =&gt; <span class="k">rfl</span>
+  | .false, _ =&gt; <span class="k">rfl</span>
+  | .equal a₁ a₂, hsub =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [beval, aeval_agree h a₁ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvBexp, hx])),
+        aeval_agree h a₂ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvBexp, hx]))]
+  | .lessequal a₁ a₂, hsub =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [beval, aeval_agree h a₁ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvBexp, hx])),
+        aeval_agree h a₂ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvBexp, hx]))]
+  | .not b₁, hsub =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [beval, beval_agree h b₁ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> simpa [fvBexp] <span class="k">using</span> hx))]
+  | .and b₁ b₂, hsub =&gt; <span class="k">by</span>
+      <span class="k">simp</span> only [beval, beval_agree h b₁ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvBexp, hx])),
+        beval_agree h b₂ (<span class="k">fun</span> x hx =&gt; hsub x (<span class="k">by</span> <span class="k">simp</span> [fvBexp, hx]))]</pre>
+<div class="doc decl"><p>Agreement survives assigning the same value to a live variable on both sides.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="agree_update_live"><a class="anchor" href="#agree_update_live">agree_update_live</a></span> {s₁ s₂ : Store} {L : IdentSet} {x : Ident} {v : Int}
+    (h : agree (remove x L) s₁ s₂) : agree L (update x v s₁) (update x v s₂) := <span class="k">by</span>
+  <span class="k">intro</span> y hy
+  by_cases hyx : y = x
+  · <span class="k">subst</span> hyx; <span class="k">simp</span> [update]
+  · <span class="k">simp</span> only [update, if_neg hyx]
+    <span class="k">exact</span> h y (<span class="k">by</span> <span class="k">simp</span> [hy, hyx])</pre>
+<div class="doc decl"><p>And it survives assigning to a dead variable on one side only.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="agree_update_dead"><a class="anchor" href="#agree_update_dead">agree_update_dead</a></span> {s₁ s₂ : Store} {L : IdentSet} {x : Ident} {v : Int}
+    (h : agree L s₁ s₂) (hx : x ∉ L) : agree L (update x v s₁) s₂ := <span class="k">by</span>
+  <span class="k">intro</span> y hy
+  by_cases hyx : y = x
+  · <span class="k">subst</span> hyx; <span class="k">exact</span> absurd hy hx
+  · <span class="k">simp</span> only [update, if_neg hyx]; <span class="k">exact</span> h y hy</pre>
+<div class="doc decl"><p>Semantic preservation for terminating programs.  Read the statement as a diagram: from stores agreeing on <code>live c L</code>, running <code>c</code> on the left and <code>dce c L</code> on the right lands in stores agreeing on <code>L</code>.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="dce_correct_terminating"><a class="anchor" href="#dce_correct_terminating">dce_correct_terminating</a></span> {s c s&#x27;} (h : cexec s c s&#x27;) :
+    ∀ (L : IdentSet) (s₁ : Store), agree (live c L) s s₁ →
+    ∃ s₁&#x27;, cexec s₁ (dce c L) s₁&#x27; ∧ agree L s&#x27; s₁&#x27; := <span class="k">by</span>
+  <span class="k">induction</span> h <span class="k">with</span>
+  | skip s =&gt; <span class="k">exact</span> <span class="k">fun</span> L s₁ ha =&gt; ⟨s₁, <span class="k">by</span> simpa <span class="k">using</span> cexec.skip s₁, <span class="k">by</span> simpa <span class="k">using</span> ha⟩
+  | assign s x a =&gt;
+      <span class="k">intro</span> L s₁ ha
+      <span class="k">simp</span> only [live_assign] <span class="k">at</span> ha
+      <span class="k">simp</span> only [dce_assign]
+      by_cases hx : x ∈ L
+      · <span class="c">-- `x` is live afterwards: keep the assignment</span>
+        <span class="k">simp</span> only [if_pos hx] <span class="k">at</span> ha ⊢
+        <span class="k">have</span> heq : aeval s a = aeval s₁ a :=
+          aeval_agree ha a (<span class="k">fun</span> y hy =&gt; <span class="k">by</span> <span class="k">simp</span> [hy])
+        <span class="k">refine</span> ⟨update x (aeval s₁ a) s₁, .assign _ _ _, ?_⟩
+        rw [← heq]
+        <span class="k">exact</span> agree_update_live (ha.mono (<span class="k">fun</span> y hy =&gt; <span class="k">by</span> <span class="k">simp</span> <span class="k">at</span> hy; <span class="k">simp</span> [hy]))
+      · <span class="c">-- `x` is dead afterwards: replace the assignment by `skip`</span>
+        <span class="k">simp</span> only [if_neg hx] <span class="k">at</span> ha ⊢
+        <span class="k">exact</span> ⟨s₁, .skip _, agree_update_dead ha hx⟩
+  | @seq c₁ c₂ s s&#x27; s&#x27;&#x27; _ _ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> L s₁ ha
+      <span class="k">simp</span> only [live_seq] <span class="k">at</span> ha
+      <span class="k">obtain</span> ⟨t₁, he₁, ha₁⟩ := ih₁ (live c₂ L) s₁ ha
+      <span class="k">obtain</span> ⟨t₂, he₂, ha₂⟩ := ih₂ L t₁ ha₁
+      <span class="k">exact</span> ⟨t₂, <span class="k">by</span> simpa <span class="k">using</span> cexec.seq he₁ he₂, ha₂⟩
+  | @ifthenelse b c₁ c₂ s s&#x27; _ ih =&gt;
+      <span class="k">intro</span> L s₁ ha
+      <span class="k">simp</span> only [live_ifthenelse] <span class="k">at</span> ha
+      <span class="k">have</span> heq : beval s b = beval s₁ b :=
+        beval_agree ha b (<span class="k">fun</span> y hy =&gt; <span class="k">by</span> <span class="k">simp</span> [hy])
+      <span class="k">obtain</span> ⟨t, he, hat⟩ := ih L s₁ (<span class="k">by</span>
+        <span class="k">cases</span> hb : beval s b
+        · <span class="k">exact</span> ha.mono (<span class="k">fun</span> y hy =&gt; <span class="k">by</span> <span class="k">simp</span> <span class="k">at</span> hy ⊢; <span class="k">grind</span>)
+        · <span class="k">exact</span> ha.mono (<span class="k">fun</span> y hy =&gt; <span class="k">by</span> <span class="k">simp</span> <span class="k">at</span> hy ⊢; <span class="k">grind</span>))
+      <span class="k">refine</span> ⟨t, ?_, hat⟩
+      <span class="k">simp</span> only [dce_ifthenelse]
+      <span class="k">refine</span> .ifthenelse ?_
+      rw [← heq]
+      <span class="k">cases</span> hb : beval s b &lt;;&gt; rw [hb] <span class="k">at</span> he &lt;;&gt; simpa <span class="k">using</span> he
+  | @while_done b c s hb =&gt;
+      <span class="k">intro</span> L s₁ ha
+      <span class="k">obtain</span> ⟨hP, hQ, _⟩ := live_while_charact b c L
+      <span class="k">have</span> hb₁ : beval s₁ b = false := <span class="k">by</span> rw [← beval_agree ha b hP]; <span class="k">exact</span> hb
+      <span class="k">exact</span> ⟨s₁, <span class="k">by</span> simpa <span class="k">using</span> cexec.while_done hb₁, ha.mono hQ⟩
+  | @while_loop b c s s&#x27; s&#x27;&#x27; hb _ _ ih₁ ih₂ =&gt;
+      <span class="k">intro</span> L s₁ ha
+      <span class="k">obtain</span> ⟨hP, hQ, hR⟩ := live_while_charact b c L
+      <span class="k">have</span> hb₁ : beval s₁ b = true := <span class="k">by</span> rw [← beval_agree ha b hP]; <span class="k">exact</span> hb
+      <span class="k">obtain</span> ⟨t₁, he₁, ha₁⟩ := ih₁ (live (.<span class="k">while</span> b c) L) s₁ (ha.mono hR)
+      <span class="k">obtain</span> ⟨t₂, he₂, ha₂⟩ := ih₂ L t₁ ha₁
+      <span class="k">refine</span> ⟨t₂, ?_, ha₂⟩
+      <span class="k">simp</span> only [dce_while]
+      <span class="k">exact</span> .while_loop hb₁ he₁ (<span class="k">by</span> simpa <span class="k">using</span> he₂)
+
+<span class="k">end</span> Deadcode</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>CompilerVerification/Deadcode.lean</code>.
+</div>
+</body>
+</html>

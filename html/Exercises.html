@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exercises</title>
+<link rel="stylesheet" href="lean2html.css">
+</head>
+<body>
+<div class="nav">
+<a href="../index.html">Course page</a>
+<span class="prevnext"><a href="CompilerVerification.Fixpoints.html">&larr; CompilerVerification.Fixpoints</a></span>
+</div>
+<h1 class="modname">Exercises</h1>
+<div class="toc"><b>Contents</b><ul><li class="l1"><a href="#sec-exercises">Exercises</a></li><li class="l2"><a href="#sec-imp">IMP</a></li><li class="l3"><a href="#sec-exercise-1-star-recommended">Exercise (1 star, recommended)</a></li><li class="l3"><a href="#sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</a></li><li class="l3"><a href="#sec-exercise-3-stars-optional">Exercise (3 stars, optional)</a></li><li class="l3"><a href="#sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</a></li><li class="l3"><a href="#sec-exercise-3-stars-optional">Exercise (3 stars, optional)</a></li><li class="l3"><a href="#sec-exercise-3-stars-optional">Exercise (3 stars, optional)</a></li><li class="l2"><a href="#sec-the-compiler">The compiler</a></li><li class="l3"><a href="#sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</a></li><li class="l3"><a href="#sec-exercise-4-stars-optional">Exercise (4 stars, optional)</a></li><li class="l2"><a href="#sec-constant-propagation">Constant propagation</a></li><li class="l3"><a href="#sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</a></li><li class="l3"><a href="#sec-exercise-2-3-stars-optional">Exercise (2–3 stars, optional)</a></li><li class="l3"><a href="#sec-exercise-3-stars-optional">Exercise (3 stars, optional)</a></li><li class="l3"><a href="#sec-exercise-4-stars-optional">Exercise (4 stars, optional)</a></li><li class="l2"><a href="#sec-dead-code-elimination">Dead code elimination</a></li><li class="l3"><a href="#sec-exercise-3-stars-optional">Exercise (3 stars, optional)</a></li></ul></div>
+<div class="content">
+<div class="license">  Exercises accompanying the Lean 4 port of Xavier Leroy&#x27;s<br>  *Proving the correctness of a compiler* (EUTypes 2019 Summer School).<br><br>  The exercises are those of the original Coq development.<br>  Original Coq sources: Copyright 2019, 2025 Xavier Leroy.<br>  This file is a modified work: the exercise statements have been restated<br>  for Lean 4.<br><br>  Distributed under the GNU Lesser General Public License, version 2.1<br>  or (at your option) any later version.  See LICENSE.md.<br><br>  Every `sorry` below is a hole for you to fill.  Building this file therefore<br>  reports &quot;declaration uses &#x27;sorry&#x27;&quot; for each unsolved exercise — that is<br>  expected, and is how you track your progress.  The main library<br>  (`CompilerVerification`) builds with no warnings and contains no `sorry`.</div>
+<pre class="code"><span class="k">import</span> CompilerVerification</pre>
+<div class="doc"><h2 id="sec-exercises">Exercises</h2>
+<p>Difficulty is marked in stars, following the original.  Exercises marked <em>(recommended)</em> are the ones to do first.</p></div>
+<pre class="code"><span class="k">namespace</span> Exercises
+
+<span class="k">open</span> IMP Compil Constprop Deadcode Sequences</pre>
+<div class="doc"><h3 id="sec-imp">IMP</h3>
+<h4 id="sec-exercise-1-star-recommended">Exercise (1 star, recommended)</h4>
+<p>Add multiplication to arithmetic expressions: extend <code>IMP.aexp</code> with a constructor <code>times</code>, and extend <code>IMP.aeval</code> accordingly.  You will also need to extend <code>freeInAexp</code>, and re-check <code>aeval_free</code>.</p>
+<h4 id="sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</h4>
+<p>Add division, and detect arithmetic overflow.  Evaluation can now fail — by division by zero, or by producing a result outside <code>[minInt, maxInt]</code> — so either change <code>aeval</code> to return <code>Option Int</code>, using <code>IMP.checkForOverflow</code>, or define the semantics relationally:</p>
+<pre class="doccode"><span class="k">inductive</span> <span class="d">aevalRel</span> : Store → aexp → Int → Prop</pre>
+<p>Which of the two is easier to prove the compiler correct against?</p>
+<h4 id="sec-exercise-3-stars-optional">Exercise (3 stars, optional)</h4>
+<p>Relate the fuel-bounded interpreter to the big-step semantics.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="cexecBounded_sound"><a class="anchor" href="#cexecBounded_sound">cexecBounded_sound</a></span> : ∀ (fuel : Nat) (s : Store) (c : com) (s&#x27; : Store),
+    cexecBounded fuel s c = some s&#x27; → cexec s c s&#x27; := <span class="k">by</span>
+  <span class="k">sorry</span>
+
+<span class="k">theorem</span> <span class="d" id="cexecBounded_complete"><a class="anchor" href="#cexecBounded_complete">cexecBounded_complete</a></span> {s : Store} {c : com} {s&#x27; : Store} (h : cexec s c s&#x27;) :
+    ∃ fuel₁, ∀ fuel, fuel ≥ fuel₁ → cexecBounded fuel s c = some s&#x27; := <span class="k">by</span>
+  <span class="k">sorry</span></pre>
+<div class="doc"><h4 id="sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</h4>
+<p>Extend the continuation semantics with C&#x27;s <code>continue</code> statement, which ends the current iteration of the enclosing loop and starts the next one.  Assume <code>com</code> gains a constructor <code>continue</code>.  <code>break</code> needs just two resumption rules:</p>
+<pre class="doccode">| break_seq   : step (.break, .seq c k, s)       (.break, k, s)
+| break_while : step (.break, .<span class="k">while</span> b c k, s)   (.skip, k, s)</pre>
+<p>Write the analogous rules for <code>continue</code>, and explain in a sentence why no other rule has to change.</p>
+<h4 id="sec-exercise-3-stars-optional">Exercise (3 stars, optional)</h4>
+<p>In Java, loops and <code>break</code>/<code>continue</code> may carry a label: <code>break lbl</code> exits the nearest enclosing loop labelled <code>lbl</code>.  Give the transition rules for <code>break lbl</code> and <code>continue lbl</code>.</p>
+<h4 id="sec-exercise-3-stars-optional">Exercise (3 stars, optional)</h4>
+<p>The converse of <code>IMP.cexec_to_steps</code>.  You will need a notion of big-step execution <em>of a continuation</em>, and a lemma in the style of <code>IMP.red_append_cexec</code>.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="steps_to_cexec"><a class="anchor" href="#steps_to_cexec">steps_to_cexec</a></span> {c : com} {s s&#x27; : Store}
+    (h : Star step (c, .stop, s) (.skip, .stop, s&#x27;)) : cexec s c s&#x27; := <span class="k">by</span>
+  <span class="k">sorry</span></pre>
+<div class="doc"><h3 id="sec-the-compiler">The compiler</h3>
+<h4 id="sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</h4>
+<p><code>Compil.compileProgram</code> of <code>if x = 1 then x := 0 else skip</code> ends the &quot;then&quot; branch with <code>branch 0</code>, which does nothing.  Rewrite <code>compileCom</code> to use <code>Compil.smartBranch</code> instead of <code>instr.branch</code>, then adapt the statement and proof of <code>compileCom_correct_terminating</code>.  Prove this lemma first — it is the only place where the difference shows.</p></div>
+<pre class="code"><span class="k">theorem</span> <span class="d" id="transitions_smartBranch"><a class="anchor" href="#transitions_smartBranch">transitions_smartBranch</a></span> {C : Code} {pc pc&#x27; d : Int} {stk : Stack} {s : Store}
+    (h : CodeAt C pc (smartBranch d)) (e : pc&#x27; = pc + 1 + d) :
+    transitions C (pc, stk, s) (pc&#x27;, stk, s) := <span class="k">by</span>
+  <span class="k">sorry</span></pre>
+<div class="doc"><h4 id="sec-exercise-4-stars-optional">Exercise (4 stars, optional)</h4>
+<p>The compiled code for a loop executes two branches per iteration: the conditional branch that tests <code>b</code>, and the unconditional branch back to the top.  One of them can be removed by putting the body <em>before</em> the test,</p>
+<pre class="doccode">compileCom c ++ compileBexp b delta₁ 0</pre>
+<p>with <code>delta₁</code> branching back to the start of <code>compileCom c</code>.  On its own this compiles a <code>while</code> loop as a <code>do…while</code> loop, which is wrong; the fix is to jump over the body on entry:</p>
+<pre class="doccode">instr.branch (codelen (compileCom c)) :: compileCom c ++ compileBexp b delta₁ 0</pre>
+<p>Modify <code>compileCom</code> accordingly and prove it correct.  The difficulty — and the four stars — is that <code>CodeAt C pc (compileCom c)</code> no longer holds on the second iteration of a loop, so you need a more flexible way of relating a command to the program counter.</p>
+<h3 id="sec-constant-propagation">Constant propagation</h3>
+<h4 id="sec-exercise-2-stars-recommended">Exercise (2 stars, recommended)</h4>
+<p>Write a bottom-up simplifier for Boolean expressions using the smart constructors, and prove it sound.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="simplifBexp"><a class="anchor" href="#simplifBexp">simplifBexp</a></span> : bexp → bexp :=
+  <span class="k">sorry</span>
+
+<span class="k">theorem</span> <span class="d" id="simplifBexp_sound"><a class="anchor" href="#simplifBexp_sound">simplifBexp_sound</a></span> (s : Store) (b : bexp) : beval s (simplifBexp b) = beval s b := <span class="k">by</span>
+  <span class="k">sorry</span></pre>
+<div class="doc"><h4 id="sec-exercise-2-3-stars-optional">Exercise (2–3 stars, optional)</h4>
+<p>What other algebraic simplifications would be worth doing — meaning: after which ones does <code>compileCom</code> emit strictly shorter code?  Add them to the smart constructors and update their soundness proofs.</p>
+<h4 id="sec-exercise-3-stars-optional">Exercise (3 stars, optional)</h4>
+<p>Exploit equality tests.  In</p>
+<pre class="doccode"><span class="k">if</span> x = 0 <span class="k">then</span> y := x + 1 <span class="k">else</span> y := 1</pre>
+<p>both branches end with <code>y = 1</code>, but the analysis of <code>Constprop.lean</code> does not see it.  Write</p>
+<pre class="doccode"><span class="k">def</span> <span class="d">Binvert</span> (S : AStore) (b : bexp) : AStore × AStore</pre>
+<p>returning <code>(S₁, S₀)</code>, where <code>S₁</code> is <code>S</code> enriched with the equalities implied by <code>b</code> being true and <code>S₀</code> with those implied by <code>b</code> being false.  Then use it to sharpen the <code>ifthenelse</code> and <code>while</code> cases of <code>Constprop.Cexec</code>.</p>
+<h4 id="sec-exercise-4-stars-optional">Exercise (4 stars, optional)</h4>
+<p>Replace constant propagation by <em>interval</em> analysis: an abstract store maps each variable to a pair <code>(lo, hi)</code> meaning <code>lo ≤ s x ≤ hi</code>, so that</p>
+<pre class="doccode"><span class="k">def</span> <span class="d">Matches</span> (s : Store) (S : AStore) : Prop :=
+  ∀ x lo hi, S.find x = some (lo, hi) → lo ≤ s x ∧ s x ≤ hi</pre>
+<p>(optionally with infinities for <code>lo</code> and <code>hi</code>).  Adapt the lattice operations, the abstract interpreters for expressions, and <code>Cexec</code>.</p>
+<h3 id="sec-dead-code-elimination">Dead code elimination</h3>
+<h4 id="sec-exercise-3-stars-optional">Exercise (3 stars, optional)</h4>
+<p><code>Deadcode.dce_correct_terminating</code> covers only terminating programs.  Prove semantic preservation for diverging ones too, by completing the simulation below against the small-step semantics <code>IMP.red</code>.  As in <code>Compil.lean</code>, some source steps correspond to no step of the optimised program, so the diagram needs an anti-stuttering measure.</p></div>
+<pre class="code"><span class="k">def</span> <span class="d" id="dceMeasure"><a class="anchor" href="#dceMeasure">dceMeasure</a></span> : com → Nat
+  | .assign _ _ =&gt; 1
+  | .seq c₁ _ =&gt; dceMeasure c₁
+  | _ =&gt; 0
+
+<span class="k">theorem</span> <span class="d" id="dce_simulation"><a class="anchor" href="#dce_simulation">dce_simulation</a></span> {c : com} {s : Store} {c&#x27; : com} {s&#x27; : Store}
+    (h : red (c, s) (c&#x27;, s&#x27;)) (L : IdentSet) (s₁ : Store) (ha : agree (live c L) s s₁) :
+    (∃ s₁&#x27;, red (dce c L, s₁) (dce c&#x27; L, s₁&#x27;) ∧ agree (live c&#x27; L) s&#x27; s₁&#x27;)
+    ∨ (dceMeasure c&#x27; &lt; dceMeasure c ∧ dce c L = dce c&#x27; L ∧ agree (live c&#x27; L) s&#x27; s₁) := <span class="k">by</span>
+  <span class="k">sorry</span>
+
+<span class="k">end</span> Exercises</pre>
+</div>
+<div class="footer">
+Generated by <code>tools/lean2html.py</code> from <code>Exercises.lean</code>.
+</div>
+</body>
+</html>
