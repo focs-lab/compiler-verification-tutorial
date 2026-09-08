@@ -157,3 +157,27 @@ changed.
 
 The original course page, slides and Coq sources are at
 <https://xavierleroy.org/courses/EUTypes-2019/>.
+
+### Before making this repository public
+
+This repository is **private**, and the material under `orig/` assumes it
+stays that way. Two different licensing situations live in there:
+
+* `orig/sources/`, `orig/compilerverif.zip` and `orig/html/` are the Coq
+  sources and their coqdoc rendering — LGPL-2.1-or-later, freely
+  redistributable. These can stay.
+* `orig/slides.pdf`, `orig/compcert-CACM.pdf`, `orig/compcert-backend.pdf`
+  and `orig/index.html` are Xavier Leroy's own copyrighted works, mirrored
+  for private teaching reference. **These must come out before the repository
+  is made public**, replaced by a link to
+  <https://xavierleroy.org/courses/EUTypes-2019/>.
+
+Note that deleting them in a new commit is not enough: they are already in
+the git history, so a clone of a public repository would still contain them.
+Going public would need either a history rewrite
+(`git filter-repo --path orig/slides.pdf --invert-paths`, and likewise for
+the PDFs and `orig/index.html`) or a fresh repository seeded from a single
+squashed commit.
+
+Nothing in the Lean development depends on those files, so removing them
+breaks nothing. See `orig/NOTICE.md`.
